@@ -1,5 +1,6 @@
 #!/bin/sh
-# Bump BUILD_NUM in src/version.ts, commit, and push.
+# Bump BUILD_NUM in src/version.ts and stage the change.
+# Then commit with your own message and push.
 # Usage: sh scripts/bump-version.sh
 set -e
 cd "$(dirname "$0")/.."
@@ -25,10 +26,7 @@ VEOF
 echo "BUILD_NUM: $CUR -> $NEXT"
 
 git add "$VERSION_FILE"
-
-# Only commit if there's a change (skip if already up to date, though unlikely)
-git diff --cached --exit-code "$VERSION_FILE" && echo "No change needed." && exit 0
-
-git commit -m "chore: bump build number to $NEXT"
-git push
-echo "Pushed with BUILD_NUM=$NEXT"
+echo ""
+echo "version.ts staged. Now commit with your own message:"
+echo "  git commit -m \"feat: xxx\""
+echo "  git push"
