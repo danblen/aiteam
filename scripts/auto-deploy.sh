@@ -16,7 +16,16 @@ while true; do
   if [ "$old" != "$new" ]; then
     echo "[$(date +%T)] New commit: $(echo "$new" | cut -c1-7), deploying..."
     git merge --ff-only FETCH_HEAD 2>&1 || { echo "merge failed"; sleep "$INTERVAL"; continue; }
+
+    # 写真实的 commit 计数到 version.ts，再构建
+    BUILD_NUM=$(git rev-list --count HEAD)
+    sed -i "s/^export const BUILD_NUM = [0-9]*;/export const BUILD_NUM = $BUILD_NUM;/" src/version.ts
+    echo "BUILD_NUM set to $BUILD_NUM"
+
     docker run --rm -e NODE_ENV=development -v "$DIR:/app":Z -w /app aiteam sh -c "npm install && npm run build" 2>&1
+
+    # 还原 version.ts 以免本地 git 状态脏
+    git checkout -- src/version.ts
 
     if docker inspect aiteam >/dev/null 2>&1; then
       docker restart aiteam
