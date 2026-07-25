@@ -188,9 +188,9 @@ export default function SessionSidebar({ health, onToggleSidebar, onOpenConfig, 
             >
               👤 {authEmail}
             </button>
-            {conversationUsage && !conversationUsage.unlimited && (
-              <span className="conv-remain" title="剩余对话次数">
-                剩余 {Math.max(0, conversationUsage.max - conversationUsage.used)} 次
+            {conversationUsage && (
+              <span className="conv-remain" title="对话次数">
+                {conversationUsage.unlimited ? '无限对话' : `剩余 ${Math.max(0, conversationUsage.max - conversationUsage.used)} 次`}
               </span>
             )}
             {userMenuOpen && (
