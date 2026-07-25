@@ -1,0 +1,22 @@
+#!/bin/sh
+# pre-commit: auto-bump BUILD_NUM in src/version.ts on every commit.
+# Install: git config core.hooksPath .githooks
+set -e
+
+VERSION_FILE="src/version.ts"
+
+# Read current BUILD_NUM (silently skip if file absent or unparsable)
+CUR=$(sed -n 's/^export const BUILD_NUM = \([0-9]*\);/\1/p' "$VERSION_FILE" 2>/dev/null)
+if [ -z "$CUR" ]; then
+  exit 0
+fi
+
+NEXT=$((CUR + 1))
+
+cat > "$VERSION_FILE" <<VEOF
+// Auto-generated — pre-commit hook bumps BUILD_NUM on each commit.
+export const APP_VERSION = '1.0.0' as const;
+export const BUILD_NUM = $NEXT;
+VEOF
+
+git add "$VERSION_FILE"
