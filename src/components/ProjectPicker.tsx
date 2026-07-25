@@ -40,10 +40,10 @@ export default function ProjectPicker() {
   return null; // SSH 等模式不在此处理
 }
 
-// 云端模式下隐藏工作树的绝对路径前缀（含用户家目录与邮箱），仅以 workspace 展示相对部分。
+// 隐藏工作树路径中 /aiteamoutput/ 前缀，只展示后面的相对部分。
 function maskRemoteWorkDir(workDir: string): string {
-  const m = workDir.match(/\/aiteamoutput\/[^/]+\/(.*)$/);
-  return m ? `workspace/${m[1]}` : workDir;
+  const m = workDir.match(/\/aiteamoutput\/(.+)$/);
+  return m ? m[1] : workDir;
 }
 
 // ---------- 云端：已绑定项目卡片（锁定） ----------
