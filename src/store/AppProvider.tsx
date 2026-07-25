@@ -37,7 +37,7 @@ import type { LocalProject } from '../lib/storage';
 import { DEFAULT_AGENTS } from '../lib/agents';
 import type { EnvironmentConfig } from '../lib/env/types';
 import { createEnvironment } from '../lib/env';
-import type { RemoteProject } from '../lib/api';
+import type { RemoteProject, ConversationUsage } from '../lib/api';
 import { runCrew, parseEngineerOutput } from '../lib/orchestrator';
 import type { RunMode } from '../lib/orchestrator';
 import {
@@ -60,6 +60,7 @@ import {
   setAuthToken,
   clearAuthToken,
   trackConversation,
+  fetchConversationUsage,
 } from '../lib/api';
 
 export type WorkTab = 'overview' | 'preview' | 'code' | 'cloud' | 'files' | 'terminal' | 'publish' | 'team';
@@ -124,6 +125,8 @@ interface AppState {
   mergeLocalSession: (id: string) => Promise<void>;
   // auth (公共登录/注册，与执行环境无关)
   authEmail: string | null;
+  /** 当前用户的对话剩余次数（null 表示未加载）。 */
+  conversationUsage: ConversationUsage | null;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string) => Promise<void>;
   logout: () => void;
@@ -189,6 +192,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [runs, setRuns] = useState<Record<string, RunState>>({});
   const [activeTab, setActiveTab] = useState<WorkTab>('overview');
   const [authEmail, setAuthEmail] = useState<string | null>(null);
+  const [conversationUsage, setConversationUsage] = useState<ConversationUsage | null>(null);
   const [localProjects, setLocalProjects] = useState<LocalProject[]>(() => loadLocalProjects());
   // 每个会话的待执行消息队列。
   const [queues, setQueues] = useState<Record<string, QueueItem[]>>({});
@@ -271,6 +275,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     clearAuthToken();
     setAuthEmail(null);
   }, []);
+
+  // 登录态变化时刷新对话剩余次数。
+  useEffect(() => {
+    setConversationUsage(null);
+    if (!authEmail) return;
+    let cancelled = false;
+    fetchConversationUsage()
+      .then((usage) => { if (!cancelled) setConversationUsage(usage); })
+      .catch(() => { if (!cancelled) setConversationUsage(null); });
+    return () => { cancelled = true; };
+  }, [authEmail]);
 
   const run = runs[current?.id] || IDLE;
 
@@ -721,7 +736,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           (async () => {
             // 对话次数限制：服务端计数，超管不限制。
             try {
-              await trackConversation();
+              const _cu = await trackConversation();
+              setConversationUsage(_cu);
             } catch (err) {
               const msg = (err as Error).message || '对话次数已达上限';
               appendLog(sid, 'error', msg);
@@ -836,7 +852,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         (async () => {
           // 对话次数限制：服务端计数，超管不限制。
           try {
-            await trackConversation();
+            const _cu = await trackConversation();
+              setConversationUsage(_cu);
           } catch (err) {
             const msg = (err as Error).message || '对话次数已达上限';
             appendLog(sid, 'error', msg);
@@ -967,7 +984,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           (async () => {
             // 对话次数限制：服务端计数，超管不限制。
             try {
-              await trackConversation();
+              const _cu = await trackConversation();
+              setConversationUsage(_cu);
             } catch (err) {
               const msg = (err as Error).message || '对话次数已达上限';
               appendLog(sid, 'error', msg);
@@ -1053,7 +1071,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       (async () => {
         // 对话次数限制：服务端计数，超管不限制。
         try {
-          await trackConversation();
+          const _cu = await trackConversation();
+              setConversationUsage(_cu);
         } catch (err) {
           const msg = (err as Error).message || '对话次数已达上限';
           appendLog(sid, 'error', msg);
@@ -1224,6 +1243,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     mergeLocalSession,
     // auth
     authEmail,
+    conversationUsage,
     login,
     register,
     logout,

@@ -10,7 +10,7 @@ import { mountDevPreview } from './preview-dev.js';
 import { mountPublish } from './publish.js';
 import { mountEnv } from './env.js';
 import { mountProjects } from './projects.js';
-import { mountAuth, authRequired, authFromRequest, checkConversationLimit, incrementConversationCount, getConversationCount, MAX_CONVERSATIONS_PER_USER } from './auth.js';
+import { mountAuth, authRequired, authFromRequest, checkConversationLimit, incrementConversationCount, getConversationCount, MAX_CONVERSATIONS_PER_USER, isAdmin } from './auth.js';
 
 // override so values in .env win over any pre-existing shell env vars.
 dotenv.config();
@@ -93,7 +93,18 @@ app.post('/api/conversation/start', (req, res) => {
   if (!checkConversationLimit(req, res)) return;
   incrementConversationCount(req.user?.email);
   const used = getConversationCount(req.user?.email);
-  res.json({ ok: true, used, max: MAX_CONVERSATIONS_PER_USER });
+  const unlimited = !authRequired() || isAdmin(req);
+  res.json({ ok: true, used, max: MAX_CONVERSATIONS_PER_USER, unlimited });
+});
+
+// 查询当前用户对话使用情况（不扣减配额）。
+app.get('/api/conversation/usage', (req, res) => {
+  // 未启用鉴权或管理员 → 无限
+  if (!authRequired() || !req.user?.email || isAdmin(req)) {
+    return res.json({ ok: true, used: 0, max: MAX_CONVERSATIONS_PER_USER, unlimited: true });
+  }
+  const used = getConversationCount(req.user?.email);
+  res.json({ ok: true, used, max: MAX_CONVERSATIONS_PER_USER, unlimited: false });
 });
 
 /**
