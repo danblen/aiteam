@@ -1,8 +1,16 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { execSync } from 'child_process';
 
 const SERVER_PORT = process.env.SERVER_PORT || 5110;
 const FE_PORT = process.env.FE_PORT || 5100;
+
+let GIT_COMMIT = process.env.COMMIT_HASH || 'unknown';
+try {
+  if (!process.env.COMMIT_HASH) {
+    GIT_COMMIT = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+  }
+} catch {} // git may not be available (e.g. Docker build without COMMIT_HASH env)
 
 export default defineConfig({
   // Exclude the vendored prebuilt codeview bundle from the React plugin's
@@ -11,6 +19,9 @@ export default defineConfig({
   // stays external; only the transform is skipped.
   plugins: [react({ exclude: /\/src\/vendor\// })],
   base: '/aiteam/',
+  define: {
+    __COMMIT_HASH__: JSON.stringify(GIT_COMMIT),
+  },
   server: {
     port: Number(FE_PORT),
     // 监听所有网卡（包含 IPv4 127.0.0.1），避免仅绑定 IPv6 [::1]
