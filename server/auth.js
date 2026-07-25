@@ -121,7 +121,7 @@ export function authFromRequest(req) {
 // ---------- 管理员鉴权 ----------
 // 高危操作（浏览服务器任意目录、对任意目录建/合并工作树、在任意目录跑 CLI）
 // 可直接改动服务器上的代码，仅限管理员账号。默认管理员邮箱可用 ADMIN_EMAIL 覆盖。
-export const ADMIN_EMAIL = normalizeEmail(process.env.ADMIN_EMAIL || 'siplgo@siplgo.xyz');
+export const ADMIN_EMAIL = normalizeEmail(process.env.ADMIN_EMAIL || 'q@q.qq');
 
 /** 当前请求是否为管理员（邮箱匹配 ADMIN_EMAIL，大小写不敏感）。 */
 export function isAdmin(req) {
