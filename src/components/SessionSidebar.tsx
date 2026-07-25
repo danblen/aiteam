@@ -188,16 +188,16 @@ export default function SessionSidebar({ health, onToggleSidebar, onOpenConfig, 
             >
               👤 {authEmail}
             </button>
-            {conversationUsage && (
-              <span className="conv-remain" title="对话次数">
-                {conversationUsage.unlimited ? '无限对话' : `剩余 ${Math.max(0, conversationUsage.max - conversationUsage.used)} 次`}
-              </span>
-            )}
             {userMenuOpen && (
               <div className="user-menu-popup">
                 <div className="user-menu-header">
                   <span className="user-menu-email">{authEmail}</span>
                   <span className="user-menu-label">已登录</span>
+                  {conversationUsage && (
+                    <span className="conv-remain">
+                      {conversationUsage.unlimited ? '无限对话' : `剩余 ${Math.max(0, conversationUsage.max - conversationUsage.used)} 次`}
+                    </span>
+                  )}
                 </div>
                 <div className="user-menu-divider" />
                 <button className="user-menu-item logout" onClick={logout}>
