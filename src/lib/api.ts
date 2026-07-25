@@ -118,6 +118,8 @@ export async function fetchMe(): Promise<{ email: string }> {
 export interface ConversationUsage {
   used: number;
   max: number;
+  /** 管理员或本地模式下无限使用。 */
+  unlimited: boolean;
 }
 
 /**
@@ -132,7 +134,15 @@ export async function trackConversation(): Promise<ConversationUsage> {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || '对话次数已达上限');
-  return { used: data.used, max: data.max };
+  return { used: data.used, max: data.max, unlimited: data.unlimited ?? false };
+}
+
+/** 查询当前用户的对话剩余次数（不扣减配额）。 */
+export async function fetchConversationUsage(): Promise<ConversationUsage> {
+  const res = await fetch(apiUrl('/api/conversation/usage'), { headers: apiHeaders() });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) return { used: 0, max: 5, unlimited: true };
+  return { used: data.used ?? 0, max: data.max ?? 5, unlimited: data.unlimited ?? true };
 }
 
 

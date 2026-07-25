@@ -111,7 +111,7 @@ interface Props {
 
 export default function SessionSidebar({ health, onToggleSidebar, onOpenConfig, onOpenAuth }: Props) {
   const app = useApp();
-  const { authEmail, logout } = app;
+  const { authEmail, logout, conversationUsage } = app;
   const llmConfig = getLlmConfig();
   const configured = Boolean(llmConfig.apiKey);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -188,6 +188,11 @@ export default function SessionSidebar({ health, onToggleSidebar, onOpenConfig, 
             >
               👤 {authEmail}
             </button>
+            {conversationUsage && !conversationUsage.unlimited && (
+              <span className="conv-remain" title="剩余对话次数">
+                剩余 {Math.max(0, conversationUsage.max - conversationUsage.used)} 次
+              </span>
+            )}
             {userMenuOpen && (
               <div className="user-menu-popup">
                 <div className="user-menu-header">
