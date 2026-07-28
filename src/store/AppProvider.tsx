@@ -113,6 +113,10 @@ interface AppState {
   bindSessionProject: (id: string, project: RemoteProject, isNew?: boolean) => Promise<void>;
   /** 云端模式：把当前会话分支合并到主干。 */
   mergeSessionProject: (id: string) => Promise<void>;
+  /** 云端模式：预选一个项目，首条消息发出时自动绑定（而非立即 checkout）。 */
+  setPendingProject: (id: string, project: RemoteProject, isNew?: boolean) => void;
+  /** 云端模式：清除预选项目。 */
+  clearPendingProject: (id: string) => void;
   /** 本地模式：已记录的历史项目（按名称）。 */
   localProjects: LocalProject[];
   /** 本地模式：从历史项目列表中移除一个项目（仅清除记录，不删除磁盘文件）。 */
@@ -463,6 +467,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     },
     [appendLog, patchCurrent, sessions],
+  );
+
+  // 云端模式：预选项目，暂不绑定。首条消息发出时由 send() 自动绑定。
+  const setPendingProject = useCallback(
+    (id: string, project: RemoteProject, isNew?: boolean) => {
+      patchCurrent(id, (s) => ({
+        ...s,
+        pendingProjectId: project.id,
+        pendingProjectName: project.name,
+        pendingProjectWorkDir: isNew ? project.workDir : undefined,
+        pendingProjectIsNew: isNew ?? false,
+        updatedAt: Date.now(),
+      }));
+    },
+    [patchCurrent],
+  );
+
+  const clearPendingProject = useCallback(
+    (id: string) => {
+      patchCurrent(id, (s) => ({
+        ...s,
+        pendingProjectId: undefined,
+        pendingProjectName: undefined,
+        pendingProjectWorkDir: undefined,
+        pendingProjectIsNew: undefined,
+        updatedAt: Date.now(),
+      }));
+    },
+    [patchCurrent],
   );
 
   // 本地模式：为会话绑定一个本地项目（名称 + 仓库主干目录）。
@@ -861,25 +894,81 @@ export function AppProvider({ children }: { children: ReactNode }) {
             return;
           }
           try {
-            // 自动创建并绑定项目，让生成的代码持久化到项目仓库中
+            // 绑定项目：优先使用用户在云端 tab 预选的项目；
+            // 若未预选则自动创建新项目。
             let workDir = sessionWorkDir;
             if (!session?.projectId && !session?.projectRoot) {
-              appendLog(sid, 'info', '正在为新会话创建项目…');
-              const project = await createProject(goal.slice(0, 40));
-              patchCurrent(sid, (s) => ({
-                ...s,
-                projectId: project.id,
-                projectName: project.name,
-                projectRoot: project.workDir,
-                workDir: project.workDir,
-                localDevMode: 'direct',
-                projectLocked: true,
-                newProject: true,
-                merged: false,
-                updatedAt: Date.now(),
-              }));
-              workDir = project.workDir;
-              appendLog(sid, 'ok', `✔ 已创建项目「${project.name}」`);
+              const pendingId = session?.pendingProjectId;
+              if (pendingId) {
+                if (session.pendingProjectIsNew) {
+                  // 用户在云端 tab 新建的项目，直接绑定即可（免去 checkout）。
+                  patchCurrent(sid, (s) => ({
+                    ...s,
+                    projectId: pendingId,
+                    projectName: session.pendingProjectName || pendingId,
+                    workDir: session.pendingProjectWorkDir || s.workDir,
+                    projectLocked: true,
+                    newProject: true,
+                    localDevMode: 'direct',
+                    merged: false,
+                    pendingProjectId: undefined,
+                    pendingProjectName: undefined,
+                    pendingProjectWorkDir: undefined,
+                    pendingProjectIsNew: undefined,
+                    updatedAt: Date.now(),
+                  }));
+                  workDir = session.pendingProjectWorkDir || sessionWorkDir;
+                  appendLog(sid, 'ok', `✔ 已绑定项目「${session.pendingProjectName || pendingId}」`);
+                } else {
+                  // 用户从项目列表选的已有项目，需 checkout 工作树。
+                  appendLog(sid, 'info', `正在为项目「${session.pendingProjectName || pendingId}」创建工作树…`);
+                  const { workDir: wt, branch } = await checkoutProject(pendingId, sid);
+                  patchCurrent(sid, (s) => ({
+                    ...s,
+                    projectId: pendingId,
+                    projectName: session.pendingProjectName || pendingId,
+                    workDir: wt,
+                    projectLocked: true,
+                    newProject: false,
+                    merged: false,
+                    pendingProjectId: undefined,
+                    pendingProjectName: undefined,
+                    pendingProjectWorkDir: undefined,
+                    pendingProjectIsNew: undefined,
+                    updatedAt: Date.now(),
+                  }));
+                  workDir = wt;
+                  appendLog(sid, 'ok', `✔ 已绑定项目「${session.pendingProjectName || pendingId}」，分支 ${branch}`);
+                  // 载入 worktree 中的现有文件。
+                  try {
+                    const files = await readLocalDirFiles(sid, wt);
+                    if (files.length > 0) {
+                      const hasRootHtml = files.some((f) => /^index\.html$/i.test(f.path));
+                      const hasJsx = files.some((f) => /\.(jsx|tsx)$/i.test(f.path));
+                      const framework: Framework = hasRootHtml && !hasJsx ? 'html' : 'react';
+                      patchCurrent(sid, (s) => ({ ...s, files, framework, updatedAt: Date.now() }));
+                      appendLog(sid, 'ok', `✔ 已载入项目中的 ${files.length} 个文件`);
+                    }
+                  } catch (_e) { /* 文件载入失败不阻塞执行 */ }
+                }
+              } else {
+                appendLog(sid, 'info', '正在为新会话创建项目…');
+                const project = await createProject(goal.slice(0, 40));
+                patchCurrent(sid, (s) => ({
+                  ...s,
+                  projectId: project.id,
+                  projectName: project.name,
+                  projectRoot: project.workDir,
+                  workDir: project.workDir,
+                  localDevMode: 'direct',
+                  projectLocked: true,
+                  newProject: true,
+                  merged: false,
+                  updatedAt: Date.now(),
+                }));
+                workDir = project.workDir;
+                appendLog(sid, 'ok', `✔ 已创建项目「${project.name}」`);
+              }
             }
 
             const env = createEnvironment(cfg, sid, projectName, workDir || undefined);
@@ -1236,6 +1325,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSessionWorkDir,
     bindSessionProject,
     mergeSessionProject,
+    setPendingProject,
+    clearPendingProject,
     localProjects,
     removeLocalProject,
     bindLocalProject,
