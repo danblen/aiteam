@@ -14,6 +14,8 @@ export default function CloudTab() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const loggedIn = Boolean(app.authEmail);
+  // 新会话（未发过消息）→ 选项目时仅预选，首条消息发出时再绑定。
+  const isFresh = s.messages.length === 0;
 
   const refresh = useCallback(() => {
     if (!loggedIn) return;
@@ -29,21 +31,27 @@ export default function CloudTab() {
     refresh();
   }, [refresh]);
 
-  const bind = useCallback(
+  // 选择项目：新会话预选（待发消息时绑定），已有消息则立即绑定。
+  const selectProject = useCallback(
     async (project: RemoteProject) => {
       setBusy(true);
       setError(null);
       try {
-        await app.bindSessionProject(s.id, project);
+        if (isFresh) {
+          app.setPendingProject(s.id, project, false);
+        } else {
+          await app.bindSessionProject(s.id, project);
+        }
       } catch (e) {
         setError((e as Error).message || '绑定项目失败');
       } finally {
         setBusy(false);
       }
     },
-    [app, s.id],
+    [app, s.id, isFresh],
   );
 
+  // 新建项目：新会话仅预选，已有消息则立即绑定。
   const create = useCallback(async () => {
     const n = name.trim();
     setBusy(true);
@@ -52,13 +60,17 @@ export default function CloudTab() {
       const project = await createProject(n);
       setName('');
       setProjects((prev) => [project, ...prev]);
-      await app.bindSessionProject(s.id, project, true);
+      if (isFresh) {
+        app.setPendingProject(s.id, project, true);
+      } else {
+        await app.bindSessionProject(s.id, project, true);
+      }
     } catch (e) {
       setError((e as Error).message || '新建项目失败');
     } finally {
       setBusy(false);
     }
-  }, [app, name, s.id]);
+  }, [app, name, s.id, isFresh]);
 
   const handleDelete = useCallback(
     async (e: React.MouseEvent, id: string) => {
@@ -69,13 +81,15 @@ export default function CloudTab() {
       try {
         await deleteProject(id);
         setProjects((prev) => prev.filter((p) => p.id !== id));
+        // 如果删的是已预选的项目，清除预选。
+        if (s.pendingProjectId === id) app.clearPendingProject(s.id);
       } catch (err) {
         setError((err as Error).message || '删除项目失败');
       } finally {
         setDeletingId(null);
       }
     },
-    [],
+    [app, s.id, s.pendingProjectId],
   );
 
   const fmtDate = (ts: number) => {
@@ -84,7 +98,7 @@ export default function CloudTab() {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
 
-  // 已绑定项目 → 显示当前项目信息
+  // ── 已绑定项目 ──
   if (s.projectId || s.projectLocked) {
     return (
       <div className="tab-pane">
@@ -120,14 +134,75 @@ export default function CloudTab() {
                 <div
                   key={p.id}
                   className={`project-item ${p.id === s.projectId ? 'active' : ''}`}
-                  style={{ cursor: p.id === s.projectId ? 'default' : 'pointer', opacity: busy ? 0.5 : 1 }}
-                  onClick={() => p.id !== s.projectId && bind(p)}
+                  style={{ cursor: 'default', opacity: 0.6 }}
                 >
                   <span className="project-item-ico">📦</span>
                   <span className="project-item-name">{p.name}</span>
                   <span className="project-item-meta">{fmtDate(p.updatedAt)}</span>
-                  {p.id === s.projectId ? (
+                  {p.id === s.projectId && (
                     <span className="project-item-meta" style={{ color: 'var(--accent)' }}>当前</span>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── 已预选项目（新会话，等待发消息） ──
+  if (s.pendingProjectId) {
+    const isNew = s.pendingProjectIsNew;
+    return (
+      <div className="tab-pane">
+        <div className="pane-toolbar">
+          <span className="pane-title">云端项目</span>
+          <span className="cloud-badge connecting">待绑定</span>
+        </div>
+        <div className="pane-body cloud-body">
+          <div className="cloud-connected">
+            <div className="cloud-connected-head">
+              <span className="cloud-ico">📦</span>
+              <div>
+                <strong>{s.pendingProjectName || s.pendingProjectId}</strong>
+                <p>
+                  {isNew
+                    ? '新项目已创建，发送第一条消息后将自动绑定到本会话。'
+                    : '已选择此项目，发送第一条消息后将自动创建工作树并绑定。'}
+                </p>
+              </div>
+            </div>
+            <div className="cloud-ops">
+              <button className="cloud-op" onClick={() => {
+                app.clearPendingProject(s.id);
+              }}>
+                ↩ 更换项目
+              </button>
+            </div>
+          </div>
+
+          {error && <p className="env-hint warn" style={{ marginTop: 12 }}>{error}</p>}
+
+          <div className="project-list" style={{ marginTop: 16 }}>
+            <div className="project-list-label">所有项目</div>
+            {loading ? (
+              <p className="env-hint">加载中…</p>
+            ) : projects.length === 0 ? (
+              <p className="env-hint">还没有项目</p>
+            ) : (
+              projects.map((p) => (
+                <div
+                  key={p.id}
+                  className={`project-item ${p.id === s.pendingProjectId ? 'active' : ''}`}
+                  style={{ cursor: 'pointer', opacity: busy ? 0.5 : 1 }}
+                  onClick={() => p.id !== s.pendingProjectId && selectProject(p)}
+                >
+                  <span className="project-item-ico">📦</span>
+                  <span className="project-item-name">{p.name}</span>
+                  <span className="project-item-meta">{fmtDate(p.updatedAt)}</span>
+                  {p.id === s.pendingProjectId ? (
+                    <span className="project-item-meta" style={{ color: 'var(--accent)' }}>已选</span>
                   ) : (
                     <span
                       className="project-item-del"
@@ -146,7 +221,7 @@ export default function CloudTab() {
     );
   }
 
-  // 未登录
+  // ── 未登录 ──
   if (!loggedIn) {
     return (
       <div className="tab-pane">
@@ -169,7 +244,11 @@ export default function CloudTab() {
     );
   }
 
-  // 项目列表
+  // ── 项目列表（未选、非新会话则点击即绑定） ──
+  const hint = isFresh
+    ? '选择项目后将在发送第一条消息时自动绑定。'
+    : '选择项目后将立即为本会话创建 Git 工作树分支。';
+
   return (
     <div className="tab-pane">
       <div className="pane-toolbar">
@@ -178,6 +257,7 @@ export default function CloudTab() {
       </div>
 
       <div className="pane-body cloud-body">
+        <p className="env-hint">{hint}</p>
         {error && <p className="env-hint warn" style={{ marginBottom: 12 }}>{error}</p>}
 
         <div className="project-new">
@@ -195,7 +275,7 @@ export default function CloudTab() {
             }}
           />
           <button className="btn-primary" onClick={create} disabled={busy}>
-            {busy ? '创建中…' : '新建项目'}
+            {busy ? '创建中…' : isFresh ? '新建并预选' : '新建并使用'}
           </button>
         </div>
 
@@ -210,7 +290,7 @@ export default function CloudTab() {
                 key={p.id}
                 className="project-item"
                 disabled={busy || deletingId === p.id}
-                onClick={() => bind(p)}
+                onClick={() => selectProject(p)}
               >
                 <span className="project-item-ico">📦</span>
                 <span className="project-item-name">{p.name}</span>

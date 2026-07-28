@@ -78,6 +78,14 @@ export interface Session {
   merged?: boolean;
   /** 本会话绑定的执行环境模式配置（本地/SSH/云端）。缺省时回退到全局默认。 */
   envConfig?: EnvironmentConfig;
+  /** 云端模式：待绑定的项目 id（用户选了项目但尚未发消息，首条消息发出时自动绑定）。 */
+  pendingProjectId?: string;
+  /** 云端模式：待绑定项目的展示名。 */
+  pendingProjectName?: string;
+  /** 云端模式：待绑定项目的工作目录（新建项目时直接使用，免去 checkout）。 */
+  pendingProjectWorkDir?: string;
+  /** 云端模式：待绑定项目是否本次新建。 */
+  pendingProjectIsNew?: boolean;
 }
 
 export type LogLevel = 'info' | 'agent' | 'ok' | 'error' | 'cmd';
