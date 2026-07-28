@@ -42,7 +42,7 @@ export default function AgentManager() {
   return (
     <div className="tab-pane">
       <div className="pane-toolbar">
-        <span className="pane-title">👥 团队</span>
+        <span className="pane-title">团队</span>
         <div className="pane-actions">
           <button className="btn ghost" onClick={reset}>恢复默认团队</button>
         </div>
