@@ -2,9 +2,9 @@
 // Stored in localStorage so the server never persists user credentials.
 
 const KEYS = {
-  API_KEY: 'atoms.llm.apiKey',
-  BASE_URL: 'atoms.llm.baseUrl',
-  MODEL: 'atoms.llm.model',
+  API_KEY: 'aiteam.llm.apiKey',
+  BASE_URL: 'aiteam.llm.baseUrl',
+  MODEL: 'aiteam.llm.model',
 };
 
 const DEFAULTS = {

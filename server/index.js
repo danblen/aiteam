@@ -233,6 +233,6 @@ if (fs.existsSync(distDir)) {
 }
 
 app.listen(PORT, () => {
-  console.log(`\n  Atoms Demo backend running: http://localhost:${PORT}`);
+  console.log(`\n  Aiteam backend running: http://localhost:${PORT}`);
   console.log(`  Remote access: token=${API_TOKEN ? '已设置' : '未设置（开放）'} origins=${ALLOWED_ORIGINS.join(',')}\n`);
 });

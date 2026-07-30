@@ -3,11 +3,11 @@ import { DEFAULT_AGENTS } from './agents';
 import { defaultEnvConfig } from './env/types';
 import type { EnvironmentConfig } from './env/types';
 
-const K_SESSIONS = 'atoms.sessions.v1';
-const K_AGENTS = 'atoms.agents.v1';
-const K_CURRENT = 'atoms.current.v1';
-const K_ENV = 'atoms.env.v1';
-const K_LOCAL_PROJECTS = 'atoms.localprojects.v1';
+const K_SESSIONS = 'aiteam.sessions.v1';
+const K_AGENTS = 'aiteam.agents.v1';
+const K_CURRENT = 'aiteam.current.v1';
+const K_ENV = 'aiteam.env.v1';
+const K_LOCAL_PROJECTS = 'aiteam.localprojects.v1';
 
 let seq = 0;
 export const uid = (p = 'id') => `${p}-${Date.now().toString(36)}-${(seq++).toString(36)}`;

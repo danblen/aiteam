@@ -7,7 +7,7 @@ import { getLlmConfig } from './llm-config';
 let _apiPrefix = '';
 let _apiToken = '';
 
-const K_AUTH_TOKEN = 'atoms.auth.token.v1';
+const K_AUTH_TOKEN = 'aiteam.auth.token.v1';
 
 // 会话令牌（邮箱登录后获得）。持久化到 localStorage 以保持登录态，
 // 注入到所有 /api 请求的 Authorization 头（优先于旧的 remote token）。
