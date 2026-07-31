@@ -5,6 +5,7 @@ import { parseEngineerOutput } from '../lib/orchestrator';
 import { EXAMPLES } from '../data/examples';
 import PromptInput from './PromptInput';
 import EnvironmentPicker from './EnvironmentPicker';
+import AgentPicker from './AgentPicker';
 import { LogoIcon } from './LogoIcon';
 import { useApp } from '../store/AppProvider';
 
@@ -35,6 +36,7 @@ function ChatPanel() {
     <section className="chat">
       <div className="chat-topbar">
         <EnvironmentPicker config={app.envConfig} onChange={app.setEnvConfig} disabled={modeLocked} />
+        <AgentPicker disabled={busy} />
       </div>
       <div className="chat-scroll" ref={scrollRef}>
         {isEmpty ? (

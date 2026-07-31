@@ -9,6 +9,45 @@ function stripAnsi(str) {
   return str.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1B\][0-9;]*\x07/g, '');
 }
 
+/**
+ * 自定义智能体注入到工作目录的「指令文件」清单。
+ * 这些文件会被各 CLI 当作持久指令读取，从而让同一 CLI 能扮演不同角色。
+ * scanWorkspace() 会跳过它们，避免污染最终的项目文件清单。
+ */
+const INSTRUCTION_FILES = new Set(['CLAUDE.md', 'AGENTS.md', 'CONVENTIONS.md']);
+
+/**
+ * 将智能体的 systemPrompt 与用户任务组合成单条任务文本。
+ * 这是兼容所有 CLI 的通用机制：即便 CLI 不读指令文件，任务前缀也能生效。
+ */
+function buildComposedTask(task, systemPrompt) {
+  const sp = (systemPrompt || '').trim();
+  if (!sp) return task;
+  return `【角色设定】\n${sp}\n\n【任务】\n${task}`;
+}
+
+/**
+ * 把 systemPrompt 写成各 CLI 约定的指令文件，落到工作目录。
+ * - claude  → CLAUDE.md（Claude Code 自动读取）
+ * - opencode→ AGENTS.md（OpenCode 自动读取）
+ * - aider   → CONVENTIONS.md（配合 --read 使用，留作通用约定）
+ * 写入失败不抛错：组合任务前缀已作为兜底。
+ */
+function writeInstructionFile(workDir, cliId, systemPrompt) {
+  const sp = (systemPrompt || '').trim();
+  if (!sp) return;
+  let name;
+  if (cliId === 'claude') name = 'CLAUDE.md';
+  else if (cliId === 'opencode') name = 'AGENTS.md';
+  else if (cliId === 'aider') name = 'CONVENTIONS.md';
+  else return;
+  try {
+    fs.writeFileSync(path.join(workDir, name), sp + '\n', 'utf8');
+  } catch {
+    /* ignore: 组合任务前缀已兜底 */
+  }
+}
+
 /** Known CLI agent definitions. */
 const CLI_DEFS = {
   claude: {
@@ -63,6 +102,9 @@ export function scanWorkspace(dir) {
       const full = path.join(current, entry.name);
       if (entry.isDirectory()) walk(full);
       else if (entry.isFile()) {
+        // 跳过智能体指令文件（CLAUDE.md / AGENTS.md / CONVENTIONS.md），
+        // 它们是角色配置而非项目产物。
+        if (INSTRUCTION_FILES.has(entry.name)) continue;
         try {
           const rel = path.relative(dir, full);
           files.push({ path: rel, content: fs.readFileSync(full, 'utf8') });
@@ -108,9 +150,12 @@ function _resolveBin(def) {
  * @param {(text: string) => void} callbacks.onStatus - stderr / status info
  * @param {AbortSignal} [callbacks.signal] - optional abort signal
  * @param {number | null} [callbacks.uid] - sandbox user UID (null = run as current user)
+ * @param {object} [opts] - 自定义智能体配置
+ * @param {string} [opts.systemPrompt] - 角色系统提示词（写入指令文件 + 组合任务前缀）
+ * @param {string} [opts.model] - 模型覆盖（claude/aider 走 --model）
  * @returns {Promise<number>} exit code
  */
-export function runCLI(cliId, task, workDir, callbacks) {
+export function runCLI(cliId, task, workDir, callbacks, opts) {
   const def = CLI_DEFS[cliId];
   if (!def) return Promise.reject(new Error(`不支持的 CLI Agent: ${cliId}`));
 
@@ -118,7 +163,19 @@ export function runCLI(cliId, task, workDir, callbacks) {
   const binPath = _resolveBin(def);
   if (!binPath) return Promise.reject(new Error(`找不到 ${cliId} 的可执行文件`));
 
-  const args = def.args(task, workDir);
+  const _opts = opts || {};
+
+  // 自定义 system prompt：写入指令文件 + 组合任务（双重保障，兼容所有 CLI）。
+  if (_opts.systemPrompt) {
+    writeInstructionFile(workDir, cliId, _opts.systemPrompt);
+    task = buildComposedTask(task, _opts.systemPrompt);
+  }
+
+  // 构造参数。claude / aider 支持 --model；opencode 的模型由其自身配置决定。
+  let args = def.args(task, workDir);
+  if (_opts.model && (cliId === 'claude' || cliId === 'aider')) {
+    args = [...args, '--model', String(_opts.model)];
+  }
 
   const child = spawnAsUser(binPath, args, {
     cwd: workDir,

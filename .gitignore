@@ -12,3 +12,5 @@ server/.data
 npm-debug.log*
 node_modules/.tmp
 .DS_Store
+.workbuddy/
+aiteamoutput/

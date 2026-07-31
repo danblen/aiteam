@@ -44,7 +44,7 @@ function sanitizeName(name) {
  * - 未提供项目名时用 sid 兜底；
  * - direct===true 且有 reqWorkDir 时，直接以该目录为项目根（不拼项目名）。
  */
-function resolveProjectDir(reqWorkDir, projectName, sid, email, direct) {
+export function resolveProjectDir(reqWorkDir, projectName, sid, email, direct) {
   if (direct && reqWorkDir) return path.resolve(reqWorkDir);
   let base = reqWorkDir ? path.resolve(reqWorkDir) : WORKSPACES_DIR;
   // 未指定工作根目录时，按邮箱分目录，方便服务器上按用户管理项目
@@ -60,7 +60,7 @@ function resolveProjectDir(reqWorkDir, projectName, sid, email, direct) {
  * 用于区分「受管理的工作区（WORKSPACES_DIR 下，注册项目/默认工作区，所有
  * 登录用户可用）」与「任意外部目录（高危，仅管理员可用）」。
  */
-function isWithin(parent, child) {
+export function isWithin(parent, child) {
   const rel = path.relative(parent, child);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
