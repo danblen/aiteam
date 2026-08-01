@@ -14,8 +14,4 @@ npm-debug.log*
 node_modules/.tmp
 .DS_Store
 .workbuddy/
-<<<<<<< HEAD
-
-=======
 aiteamoutput/
->>>>>>> team
