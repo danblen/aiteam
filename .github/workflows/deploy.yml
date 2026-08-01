@@ -2,7 +2,7 @@ name: Deploy
 
 on:
   push:
-    branches: [main]
+    branches: [main, team]
   workflow_dispatch:
     inputs:
       target:
@@ -68,7 +68,8 @@ jobs:
           script: |
             set -e
             cd /root/ws/aiteam
-            git pull --no-rebase origin main
+            git fetch origin ${{ github.ref_name }}
+            git checkout -B ${{ github.ref_name }} origin/${{ github.ref_name }}
 
             # Build frontend inside the runtime container (no image rebuild needed)
             docker run --rm -e NODE_ENV=development -e BUILD_NUM=${{ github.run_number }} -v "$(pwd):/app":Z -w /app aiteam sh -c "npm install && npm run build"
@@ -99,7 +100,8 @@ jobs:
           script: |
             set -e
             cd $HOME/ws/aiteam
-            git pull --no-rebase origin main
+            git fetch origin ${{ github.ref_name }}
+            git checkout -B ${{ github.ref_name }} origin/${{ github.ref_name }}
 
             # Build frontend inside the runtime container (no image rebuild needed)
             docker run --rm -e NODE_ENV=development -e BUILD_NUM=${{ github.run_number }} -v "$(pwd):/app" -w /app aiteam sh -c "npm install && npm run build"
