@@ -9,18 +9,23 @@ import FilesTab from './tabs/FilesTab';
 import TerminalTab from './tabs/TerminalTab';
 import PublishTab from './tabs/PublishTab';
 import AgentManager from './AgentManager';
+import AgentsTab from './tabs/AgentsTab';
+import WorkflowsTab from './tabs/WorkflowsTab';
 
 interface Props {
   files: ProjectFile[];
   activeTab: WorkTab;
   streaming: boolean;
   projectDir?: string;
+  codeRefreshKey?: string | number;
   onTabChange: (tab: WorkTab) => void;
 }
 
 const TABS: { id: WorkTab; label: string; icon: string }[] = [
   { id: 'overview', label: '概览', icon: '<svg width="15" height="15" viewBox="0 0 15 15" fill="none"><rect x="1.5" y="1.5" width="12" height="5.5" rx="1.2" stroke="currentColor" stroke-width="1.2" fill="none"/><rect x="1.5" y="8.5" width="5.5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.2" fill="none"/><rect x="8.5" y="8.5" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>' },
   { id: 'team', label: '团队', icon: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="5.5" cy="5" r="2" stroke="currentColor" stroke-width="1.3" fill="none"/><circle cx="11" cy="5" r="2" stroke="currentColor" stroke-width="1.3" fill="none"/><path d="M1 14v-1a3.5 3.5 0 013.5-3.5h2A3.5 3.5 0 0110 13v1M9 14v-1a3 3 0 013-3h1a3 3 0 013 3v1" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>' },
+  { id: 'agents', label: '智能体', icon: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="3" y="4" width="10" height="8" rx="2" stroke="currentColor" stroke-width="1.3" fill="none"/><circle cx="6" cy="8" r="1" fill="currentColor"/><circle cx="10" cy="8" r="1" fill="currentColor"/><path d="M8 1.5v2M5 12v2M11 12v2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>' },
+  { id: 'workflows', label: '工作流', icon: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="3.5" cy="4" r="1.8" stroke="currentColor" stroke-width="1.3" fill="none"/><circle cx="12.5" cy="4" r="1.8" stroke="currentColor" stroke-width="1.3" fill="none"/><circle cx="8" cy="12" r="1.8" stroke="currentColor" stroke-width="1.3" fill="none"/><path d="M5 4.5h6M4.5 5.5L7 10.5M11.5 5.5L9 10.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>' },
   { id: 'terminal', label: '终端', icon: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 12l5-4-5-4M9 12h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>' },
   { id: 'preview', label: '预览', icon: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 8s2-4 6-4 6 4 6 4-2 4-6 4-6-4-6-4z" stroke="currentColor" stroke-width="1.3" fill="none"/><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.3" fill="none"/></svg>' },
   { id: 'code', label: '代码', icon: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 4L2 8l4 4M10 4l4 4-4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>' },
@@ -29,7 +34,7 @@ const TABS: { id: WorkTab; label: string; icon: string }[] = [
   { id: 'publish', label: '发布', icon: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v9M4 6l4-4 4 4M2 12v2h12v-2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>' },
 ];
 
-function WorkspacePanel({ files, activeTab, streaming, projectDir, onTabChange }: Props) {
+function WorkspacePanel({ files, activeTab, streaming, projectDir, codeRefreshKey, onTabChange }: Props) {
   return (
     <section className="workspace">
       <div className="workspace-bar">
@@ -50,12 +55,21 @@ function WorkspacePanel({ files, activeTab, streaming, projectDir, onTabChange }
       <div className="workspace-body">
         {activeTab === 'overview' && <OverviewTab />}
         {activeTab === 'preview' && <PreviewTab />}
-        {activeTab === 'code' && <CodeTab files={files} streaming={streaming} projectDir={projectDir} />}
+        {activeTab === 'code' && (
+          <CodeTab
+            files={files}
+            streaming={streaming}
+            projectDir={projectDir}
+            refreshKey={codeRefreshKey}
+          />
+        )}
         {activeTab === 'cloud' && <CloudTab />}
         {activeTab === 'files' && <FilesTab onOpenInEditor={() => onTabChange('code')} />}
         {activeTab === 'terminal' && <TerminalTab />}
         {activeTab === 'publish' && <PublishTab />}
         {activeTab === 'team' && <AgentManager />}
+        {activeTab === 'agents' && <AgentsTab />}
+        {activeTab === 'workflows' && <WorkflowsTab />}
       </div>
     </section>
   );

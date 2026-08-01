@@ -121,12 +121,18 @@ export class FsaProvider implements FileProvider {
 }
 
 export interface ServerProviderOptions {
+  /** Custom fetch (e.g. for auth headers). Defaults to global `fetch`. */
+  fetch?: typeof fetch;
+  /** LRU size for file reads; `0` disables cache. Default 32. */
+  readCacheSize?: number;
   git?: GitBackend;
 }
 export class ServerProvider implements FileProvider {
   constructor(baseUrl: string, rootPath: string, options?: ServerProviderOptions);
   capabilities: ProviderCapabilities;
   git?: GitBackend;
+  /** Drop cached file reads after external writes. */
+  invalidateReadCache(): void;
   listDir(path?: string): Promise<DirEntry[]>;
   readFileText(path: string, maxBytes?: number): Promise<ReadTextResult>;
   readFileBlob(path: string): Promise<Blob>;
@@ -182,6 +188,10 @@ export interface CodeWorkspaceProps {
   provider: FileProvider;
   /** Changing this key resets the tree/selection (e.g. on space switch). */
   providerKey?: string | null;
+  /** Changing this token refreshes expanded dirs without resetting selection. */
+  refreshToken?: string | number | null;
+  /** Refresh tree/git on window focus. Default true. */
+  autoRefreshOnFocus?: boolean;
   /** Display name for the current root. */
   rootName?: string | null;
 

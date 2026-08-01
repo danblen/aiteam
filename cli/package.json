@@ -1,0 +1,38 @@
+{
+  "name": "@danblen/cli",
+  "version": "1.0.0",
+  "description": "统一调度 claude / opencode / aider 等本机 Agent CLI",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "bin": {
+    "cli": "bin/entry.js"
+  },
+  "files": [
+    "index.js",
+    "config.js",
+    "adapter.js",
+    "registry.js",
+    "run.js",
+    "workspace.js",
+    "resolve-bin.js",
+    "adapters",
+    "bin"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "claude",
+    "opencode",
+    "aider",
+    "agent",
+    "cli"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}

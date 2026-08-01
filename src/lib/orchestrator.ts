@@ -90,7 +90,7 @@ export async function runCrew(
     return { files: null, framework: 'react', aborted: false };
   }
 
-  const roster = team.map((a) => `${a.emoji} ${a.name}`).join(' → ');
+  const roster = team.map((a) => a.name).join(' → ');
   callbacks.onSystem(
     mode === 'iterate'
       ? `延续当前项目，由 ${roster} 进行增量迭代`

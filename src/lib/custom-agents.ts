@@ -1,0 +1,135 @@
+/**
+ * 自定义智能体与工作流的类型定义（前端视角）。
+ * 与后端 server/agents-store.js 的数据模型一一对应。
+ */
+
+/** 可绑定的 CLI Agent 类型，取决于云端/本机安装了哪些 CLI。 */
+export type AgentCliId = 'claude' | 'opencode' | 'aider';
+
+/** 多智能体运行模式。 */
+export type MultiAgentMode = 'agents' | 'workflow' | 'supervisor';
+
+/** 用户自建的智能体：一个 CLI + 自定义 system prompt + 可选 model。 */
+export interface CustomAgent {
+  id: string;
+  name: string;
+  cliId: AgentCliId;
+  systemPrompt: string;
+  model: string;
+  enabled: boolean;
+  producesCode: boolean;
+  /** 只读智能体（review/test），可与其他步骤并行。 */
+  readOnly?: boolean;
+  /** 默认写文件域（glob 前缀），供工作流步骤继承。 */
+  defaultFileScope?: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** 工作流的一个步骤：绑定一个智能体 + 任务模板 + 编排元信息。 */
+export interface WorkflowStep {
+  id: string;
+  /** 引用 CustomAgent.id；为空表示待配置。 */
+  agentId: string;
+  /**
+   * 任务模板，支持插值变量：
+   *   {{input}}               用户本次输入
+   *   {{prev}} / {{prev.files}} / {{prev.notes}}  前驱节点产物
+   *   {{nodes.<id>.contract.summary|files|notes}} 任意已完成节点产物
+   *   {{nodes.<id>.exitCode}}                      任意节点退出码
+   *   {{workspace_files}}      当前工作区文件清单
+   * 留空时：首步直接用用户输入，后续步自动拼上前序产出。
+   */
+  taskTemplate: string;
+  /**
+   * 显式前驱节点 id。留空 = 依赖前一步（顺序链）；
+   * 声明后仅依赖指定节点，无依赖关系的节点可并行执行（DAG）。
+   */
+  dependsOn?: string[];
+  /**
+   * 条件表达式（留空 = 总是执行）。受限语法（无 eval）：
+   *   <path> contains "<string>"    子串/数组成员包含
+   *   <path> == <number>            数值相等
+   *   <path> exists                 路径有值
+   * path 例：input / nodes.step1.exitCode / nodes.step1.contract.summary
+   */
+  condition?: string;
+  /** 失败重试策略。maxAttempts 1-5。 */
+  retry?: { maxAttempts: number; backoffMs: number };
+  /** 单步超时（ms）；0 = 服务端默认（5 分钟）。 */
+  timeoutMs?: number;
+  /** 写文件域 glob 前缀；空 = 独占整个工作区。 */
+  fileScope?: string[];
+  /** 只读步骤，可并行。 */
+  readOnly?: boolean;
+  /** 失败策略：continue | skip-dependents | abort */
+  onFailure?: 'continue' | 'skip-dependents' | 'abort';
+}
+
+/** 工作流：有序步骤编排，可复用的智能体协作流程。 */
+export interface Workflow {
+  id: string;
+  name: string;
+  description: string;
+  steps: WorkflowStep[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** CLI 选项的展示元数据。 */
+export const CLI_OPTIONS: { id: AgentCliId; name: string; desc: string }[] = [
+  { id: 'claude', name: 'Claude Code', desc: 'Anthropic 官方 CLI，读 CLAUDE.md 指令' },
+  { id: 'opencode', name: 'OpenCode', desc: '开源 Agent CLI，读 AGENTS.md 指令' },
+  { id: 'aider', name: 'Aider', desc: 'Git 友好的代码编辑 CLI' },
+];
+
+export function cliLabel(id: AgentCliId): string {
+  return CLI_OPTIONS.find((c) => c.id === id)?.name || id;
+}
+
+/** 创建一个空白智能体模板。 */
+export function newCustomAgentTemplate(): CustomAgent {
+  const now = Date.now();
+  return {
+    id: '',
+    name: '新智能体',
+    cliId: 'claude',
+    systemPrompt: '你是一名资深工程师，擅长用 React + TypeScript 构建现代 Web 应用。',
+    model: '',
+    enabled: true,
+    producesCode: true,
+    readOnly: false,
+    defaultFileScope: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+/** 创建一个空白工作流模板。 */
+export function newWorkflowTemplate(): Workflow {
+  const now = Date.now();
+  return {
+    id: '',
+    name: '新工作流',
+    description: '',
+    steps: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+/** 创建一个空白步骤模板。 */
+export function newStepTemplate(): WorkflowStep {
+  return {
+    id: `step-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    agentId: '',
+    taskTemplate: '',
+    dependsOn: [],
+    condition: '',
+    retry: { maxAttempts: 1, backoffMs: 0 },
+    timeoutMs: 0,
+    fileScope: [],
+    readOnly: false,
+    onFailure: 'continue',
+  };
+}

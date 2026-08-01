@@ -41,8 +41,11 @@ export default function App() {
   // 生成前就展示当前工作目录的代码。会话内已有（生成 / 已载入）文件时优先展示它们。
   const sid = app.current.id;
   const hasSessionFiles = app.current.files.length > 0;
+  // 有 projectDir 时 Code tab 走按需 API，不再全量 scan 工作区。
+  const useLazyWorkspace = Boolean(projectDir);
+
   useEffect(() => {
-    if (app.running || hasSessionFiles || !projectDir) {
+    if (useLazyWorkspace || app.running || hasSessionFiles || !projectDir) {
       setDiskFiles([]);
       return;
     }
@@ -51,13 +54,15 @@ export default function App() {
       .then((files) => { if (!cancelled) setDiskFiles(files); })
       .catch(() => { if (!cancelled) setDiskFiles([]); });
     return () => { cancelled = true; };
-  }, [sid, projectDir, app.running, hasSessionFiles]);
+  }, [sid, projectDir, app.running, hasSessionFiles, useLazyWorkspace]);
 
   const displayFiles = app.running && app.liveFiles.length
     ? app.liveFiles
     : hasSessionFiles
       ? app.current.files
       : diskFiles;
+
+  const codeRefreshKey = `${app.running ? 'run' : 'idle'}:${app.liveFiles.length}:${app.current.files.length}`;
 
   return (
     <div className={`app ${sidebarOpen ? '' : 'no-sidebar'}`}>
@@ -87,6 +92,7 @@ export default function App() {
           onTabChange={app.setActiveTab}
           streaming={app.running}
           projectDir={projectDir}
+          codeRefreshKey={codeRefreshKey}
         />
       </main>
       {configOpen && (

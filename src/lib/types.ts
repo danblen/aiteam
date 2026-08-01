@@ -6,8 +6,6 @@ export type Role = 'user' | 'assistant';
 export interface AgentRole {
   id: string;
   name: string;
-  emoji: string;
-  color: string;
   /** One-line responsibility shown in the UI. */
   goal: string;
   /** The system prompt that defines this agent's behavior. */
@@ -27,8 +25,6 @@ export interface ChatMessage {
   /** Populated when kind === 'agent'. */
   agentId?: string;
   agentName?: string;
-  emoji?: string;
-  color?: string;
   /** True if this agent message produced runnable code. */
   hasCode?: boolean;
 }

@@ -30,7 +30,8 @@ async function main() {
     stdio: 'inherit',
   });
 
-  const web = spawn('npx', ['vite'], {
+  // 直接以 node 启动 vite，避免 Windows 下 spawn('npx') 无法解析 .cmd 扩展名（ENOENT）。
+  const web = spawn(process.execPath, ['node_modules/vite/bin/vite.js'], {
     env: { ...process.env, FE_PORT: String(fe), SERVER_PORT: String(be) },
     stdio: 'inherit',
   });

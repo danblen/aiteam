@@ -1,8 +1,7 @@
-import { execFile } from 'node:child_process';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
-import os from 'node:os';
 import { runCLI, scanWorkspace } from './cli.js';
 import { startDevServer } from './preview-dev.js';
 import { runSSHAndSync, testSSH } from './ssh.js';
@@ -12,7 +11,10 @@ import { ensureIsolatedUser, secureWorkspace, removeIsolatedUser } from './user-
 // 本机可被探测到的 CLI Agent 清单。
 const KNOWN_CLIS = [
   { id: 'claude', name: 'Claude Code CLI', bin: 'claude' },
-  { id: 'opencode', name: 'OpenCode CLI', bin: 'opencode', fallbackPaths: ['/Volumes/z/app/opencode/opencode.sh'] },
+  { id: 'opencode', name: 'OpenCode CLI', bin: 'opencode', fallbackPaths: [
+    path.join(os.homedir(), '.opencode', 'bin', process.platform === 'win32' ? 'opencode.exe' : 'opencode'),
+    '/Volumes/z/app/opencode/opencode.sh',
+  ] },
   { id: 'aider', name: 'Aider', bin: 'aider' },
 ];
 
@@ -44,7 +46,7 @@ function sanitizeName(name) {
  * - 未提供项目名时用 sid 兜底；
  * - direct===true 且有 reqWorkDir 时，直接以该目录为项目根（不拼项目名）。
  */
-function resolveProjectDir(reqWorkDir, projectName, sid, email, direct) {
+export function resolveProjectDir(reqWorkDir, projectName, sid, email, direct) {
   if (direct && reqWorkDir) return path.resolve(reqWorkDir);
   let base = reqWorkDir ? path.resolve(reqWorkDir) : WORKSPACES_DIR;
   // 未指定工作根目录时，按邮箱分目录，方便服务器上按用户管理项目
@@ -60,20 +62,12 @@ function resolveProjectDir(reqWorkDir, projectName, sid, email, direct) {
  * 用于区分「受管理的工作区（WORKSPACES_DIR 下，注册项目/默认工作区，所有
  * 登录用户可用）」与「任意外部目录（高危，仅管理员可用）」。
  */
-function isWithin(parent, child) {
+export function isWithin(parent, child) {
   const rel = path.relative(parent, child);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
-function which(bin) {
-  return new Promise((resolve) => {
-    execFile('which', [bin], { timeout: 5000 }, (err, stdout) => {
-      if (err) return resolve(null);
-      const p = stdout.trim().split('\n')[0];
-      resolve(p || null);
-    });
-  });
-}
+import { resolveExecutable } from '../cli/index.js';
 
 /**
  * SSE helper: send an event to the client.
@@ -97,15 +91,12 @@ export function mountEnv(app) {
       agents.push({ id: 'builtin', name: '内置智能体团队', kind: 'builtin' });
       const found = await Promise.all(
         KNOWN_CLIS.map(async (c) => {
-          let p = await which(c.bin);
-          // which 找不到时尝试 fallback 路径（alias 等情况）
+          let p = await resolveExecutable(c.bin);
+          // 找不到时尝试 fallback 绝对路径
           if (!p && c.fallbackPaths) {
             for (const fp of c.fallbackPaths) {
-              try {
-                await fs.promises.access(fp, fs.constants.X_OK);
-                p = fp;
-                break;
-              } catch { /* continue */ }
+              p = await resolveExecutable(fp);
+              if (p) break;
             }
           }
           return p ? { id: c.id, name: c.name, kind: 'cli', path: p } : null;

@@ -1,5 +1,6 @@
 import type { Framework, HealthInfo, ProjectFile } from './types';
 import type { AvailableAgent, EnvironmentMode } from './env/types';
+import type { CustomAgent, Workflow } from './custom-agents';
 import { getLlmConfig } from './llm-config';
 
 // ---------- Remote / configurable base URL ----------
@@ -72,6 +73,20 @@ function apiHeaders(extra?: Record<string, string>): Record<string, string> {
   const bearer = _authToken || _apiToken;
   if (bearer) h['Authorization'] = `Bearer ${bearer}`;
   return h;
+}
+
+/** 暴露给 env runner 使用：按当前（可能重定向到远端）前缀拼出 /api 路径。 */
+export { apiUrl, apiHeaders };
+
+/** codeview 按需读盘（/api/read-tree、/api/read-file），自动带鉴权头。 */
+export async function workspaceFetch(apiPath: string, init?: RequestInit): Promise<Response> {
+  const extra = init?.headers && !(init.headers instanceof Headers)
+    ? (init.headers as Record<string, string>)
+    : undefined;
+  return fetch(apiUrl(apiPath), {
+    ...init,
+    headers: apiHeaders(extra),
+  });
 }
 
 // ---------- Auth ----------
@@ -408,6 +423,95 @@ export async function mergeLocalProject(dir: string, sid: string): Promise<void>
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `合并到主干失败 (${res.status})`);
 }
+
+// ---------- Custom Agents（多智能体云模式） ----------
+
+/** 列出当前用户的自定义智能体（云端模式下自动打到远端实例）。 */
+export async function listCustomAgents(): Promise<{ agents: CustomAgent[]; supportedClis: string[] }> {
+  const res = await fetch(apiUrl('/api/agents'), { headers: apiHeaders() });
+  const data = await res.json().catch(() => ({ agents: [] }));
+  if (!res.ok) throw new Error(data.error || `读取智能体失败 (${res.status})`);
+  return { agents: (data.agents || []) as CustomAgent[], supportedClis: data.supportedClis || [] };
+}
+
+/** 新建智能体（后端分配 id）。 */
+export async function createCustomAgent(agent: Omit<CustomAgent, 'id' | 'createdAt' | 'updatedAt'>): Promise<CustomAgent> {
+  const res = await fetch(apiUrl('/api/agents'), {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(agent),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.agent) throw new Error(data.error || `新建智能体失败 (${res.status})`);
+  return data.agent as CustomAgent;
+}
+
+/** 更新智能体。 */
+export async function updateCustomAgent(id: string, changes: Partial<CustomAgent>): Promise<CustomAgent> {
+  const res = await fetch(apiUrl(`/api/agents/${encodeURIComponent(id)}`), {
+    method: 'PUT',
+    headers: apiHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(changes),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.agent) throw new Error(data.error || `更新智能体失败 (${res.status})`);
+  return data.agent as CustomAgent;
+}
+
+/** 删除智能体。 */
+export async function deleteCustomAgent(id: string): Promise<void> {
+  const res = await fetch(apiUrl(`/api/agents/${encodeURIComponent(id)}`), {
+    method: 'DELETE',
+    headers: apiHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `删除智能体失败 (${res.status})`);
+}
+
+// ---------- Workflows（多智能体编排） ----------
+
+/** 列出当前用户的工作流（同时返回 agent 清单供编辑器下拉用）。 */
+export async function listWorkflows(): Promise<{ workflows: Workflow[]; agents: CustomAgent[] }> {
+  const res = await fetch(apiUrl('/api/workflows'), { headers: apiHeaders() });
+  const data = await res.json().catch(() => ({ workflows: [] }));
+  if (!res.ok) throw new Error(data.error || `读取工作流失败 (${res.status})`);
+  return { workflows: (data.workflows || []) as Workflow[], agents: (data.agents || []) as CustomAgent[] };
+}
+
+/** 新建工作流。 */
+export async function createWorkflow(wf: Omit<Workflow, 'id' | 'createdAt' | 'updatedAt'>): Promise<Workflow> {
+  const res = await fetch(apiUrl('/api/workflows'), {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(wf),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.workflow) throw new Error(data.error || `新建工作流失败 (${res.status})`);
+  return data.workflow as Workflow;
+}
+
+/** 更新工作流。 */
+export async function updateWorkflow(id: string, changes: Partial<Workflow>): Promise<Workflow> {
+  const res = await fetch(apiUrl(`/api/workflows/${encodeURIComponent(id)}`), {
+    method: 'PUT',
+    headers: apiHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(changes),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.workflow) throw new Error(data.error || `更新工作流失败 (${res.status})`);
+  return data.workflow as Workflow;
+}
+
+/** 删除工作流。 */
+export async function deleteWorkflow(id: string): Promise<void> {
+  const res = await fetch(apiUrl(`/api/workflows/${encodeURIComponent(id)}`), {
+    method: 'DELETE',
+    headers: apiHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `删除工作流失败 (${res.status})`);
+}
+
 
 export interface StreamHandlers {
   onDelta: (text: string) => void;

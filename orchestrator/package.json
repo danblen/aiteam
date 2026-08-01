@@ -1,0 +1,35 @@
+{
+  "name": "@danblen/orchestrator",
+  "version": "1.0.0",
+  "description": "多智能体 DAG 编排引擎：并行调度、黑板、Supervisor",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "graph.js",
+    "executor.js",
+    "supervisor.js",
+    "blackboard.js",
+    "scope.js",
+    "validate.js",
+    "conditions.js",
+    "contract.js"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "agent",
+    "orchestrator",
+    "workflow",
+    "dag",
+    "multi-agent"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -10,6 +10,8 @@ import { mountDevPreview } from './preview-dev.js';
 import { mountPublish } from './publish.js';
 import { mountEnv } from './env.js';
 import { mountProjects } from './projects.js';
+import { mountMultiAgent } from './multi-agent.js';
+import { mountWorkspaceFiles } from './workspace-files.js';
 import { mountAuth, authRequired, authFromRequest, checkConversationLimit, incrementConversationCount, getConversationCount, MAX_CONVERSATIONS_PER_USER, isAdmin } from './auth.js';
 
 // override so values in .env win over any pre-existing shell env vars.
@@ -66,6 +68,12 @@ mountEnv(app);
 
 // Per-user project registry + Git worktree lifecycle (remote mode projects).
 mountProjects(app);
+
+// 多智能体：自定义智能体 / 工作流 CRUD + DAG 编排 + Supervisor 开放任务（SSE）。
+mountMultiAgent(app);
+
+// codeview 按需读盘：/api/read-tree、/api/read-file
+mountWorkspaceFiles(app);
 
 // Write generated files to a project directory on disk.
 app.post('/api/write-project-files', (req, res) => {
