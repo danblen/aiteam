@@ -37,8 +37,8 @@ import type { LocalProject } from '../lib/storage';
 import { DEFAULT_AGENTS } from '../lib/agents';
 import type { EnvironmentConfig } from '../lib/env/types';
 import { createEnvironment } from '../lib/env';
-import { runMultiAgent } from '../lib/env/multi-agent';
-import type { CustomAgent, Workflow } from '../lib/custom-agents';
+import { runMultiAgent, abortMultiAgentRun } from '../lib/env/multi-agent';
+import type { CustomAgent, Workflow, MultiAgentMode } from '../lib/custom-agents';
 import type { RemoteProject, ConversationUsage } from '../lib/api';
 import { runCrew, parseEngineerOutput } from '../lib/orchestrator';
 import type { RunMode } from '../lib/orchestrator';
@@ -80,6 +80,8 @@ export interface QueueItem {
   id: string;
   text: string;
   mode: RunMode;
+  workflowId?: string;
+  maMode?: MultiAgentMode;
 }
 
 /** Per-session run state so multiple sessions can run concurrently. */
@@ -145,7 +147,7 @@ interface AppState {
   register: (email: string, password: string) => Promise<void>;
   logout: () => void;
   // run actions
-  send: (text: string, mode?: RunMode, forcedWorkDir?: string, maOverride?: { agentIds?: string[]; workflowId?: string }) => void;
+  send: (text: string, mode?: RunMode, forcedWorkDir?: string, maOverride?: { agentIds?: string[]; workflowId?: string; mode?: MultiAgentMode }) => void;
   /** 从工作流 tab 直接触发一个工作流执行（输入任务文本后按预定义步骤编排）。 */
   runWorkflow: (workflowId: string, text: string) => void;
   /** 当前会话的待执行消息队列（运行中提交的消息会入队，依次自动执行）。 */
@@ -166,6 +168,9 @@ interface AppState {
   selectedAgentIds: string[];
   /** 本次任务选定的工作流（设置后覆盖智能体选择）。 */
   activeWorkflowId: string | null;
+  /** 多智能体运行模式：顺序 / 开放任务 Supervisor。 */
+  multiAgentMode: MultiAgentMode;
+  setMultiAgentMode: (mode: MultiAgentMode) => void;
   /** 切换某智能体的选中状态。 */
   toggleSelectedAgent: (id: string) => void;
   clearSelectedAgents: () => void;
@@ -234,10 +239,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>([]);
   const [activeWorkflowId, setActiveWorkflowId] = useState<string | null>(null);
+  const [multiAgentMode, setMultiAgentMode] = useState<MultiAgentMode>('agents');
   // 每个会话的待执行消息队列。
   const [queues, setQueues] = useState<Record<string, QueueItem[]>>({});
 
   const abortRefs = useRef<Record<string, AbortController>>({});
+  const maRunIdRefs = useRef<Record<string, string>>({});
   const liveContentRefs = useRef<Record<string, string>>({});
   const codeAgentRefs = useRef<Record<string, boolean>>({});
   const currentIdRef = useRef<string>('');
@@ -646,10 +653,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const stop = useCallback(() => {
     const id = currentIdRef.current;
+    const runId = maRunIdRefs.current[id];
+    if (runId) {
+      const session = sessions.find((s) => s.id === id);
+      const cfg = session?.envConfig || envConfig;
+      const remoteUrl = cfg.mode === 'remote' ? cfg.remote.url : undefined;
+      abortMultiAgentRun(runId, remoteUrl).catch(() => {});
+      delete maRunIdRefs.current[id];
+    }
     abortRefs.current[id]?.abort();
     delete abortRefs.current[id];
     setRun(id, { running: false, live: null, liveFiles: [] });
-  }, [setRun]);
+  }, [setRun, sessions, envConfig]);
 
   const runPreviewBuild = useCallback(
     async (sid: string, files: ProjectFile[], framework: Framework) => {
@@ -711,7 +726,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   previewNowRef.current = previewNow;
 
   const send = useCallback(
-    (text: string, mode: RunMode = 'iterate', forcedWorkDir?: string, maOverride?: { agentIds?: string[]; workflowId?: string }) => {
+    (text: string, mode: RunMode = 'iterate', forcedWorkDir?: string, maOverride?: { agentIds?: string[]; workflowId?: string; mode?: MultiAgentMode }) => {
       const goal = text.trim();
       const sid = current?.id;
       if (!goal || !sid) return;
@@ -790,20 +805,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // 多个 CLI Agent 按顺序执行，每步产出带入下一步，最终统一扫描文件 + 预览。
       const effAgentIds = maOverride?.agentIds ?? selectedAgentIds;
       const effWorkflowId = maOverride?.workflowId ?? activeWorkflowId;
-      if (effAgentIds.length > 0 || effWorkflowId) {
-        const maMeta = new Map<string, { name: string; emoji: string; color: string; cliId: string; producesCode: boolean }>();
-        for (const a of customAgents) {
-          maMeta.set(a.id, { name: a.name, emoji: a.emoji, color: a.color, cliId: a.cliId, producesCode: a.producesCode });
+      const effMaMode: MultiAgentMode | null = maOverride?.mode
+        ?? (effWorkflowId ? 'workflow' : null)
+        ?? (multiAgentMode === 'supervisor' && effAgentIds.length > 0 ? 'supervisor' : null)
+        ?? (effAgentIds.length > 0 ? 'agents' : null);
+
+      if (effMaMode && (effAgentIds.length > 0 || effWorkflowId)) {
+        if (effMaMode === 'supervisor' && effAgentIds.length === 0) {
+          appendLog(sid, 'error', 'Supervisor 模式请至少选择一个智能体');
+          setRun(sid, { running: false, error: 'Supervisor 模式请至少选择一个智能体' });
+          return;
         }
-        const isWorkflow = Boolean(effWorkflowId);
+        const maMeta = new Map<string, { name: string; cliId: string; producesCode: boolean }>();
+        for (const a of customAgents) {
+          maMeta.set(a.id, { name: a.name, cliId: a.cliId, producesCode: a.producesCode });
+        }
+        const isWorkflow = effMaMode === 'workflow' && Boolean(effWorkflowId);
+        const isSupervisor = effMaMode === 'supervisor';
         const summaryName = isWorkflow
           ? (workflows.find((w) => w.id === effWorkflowId)?.name || '工作流')
-          : `${effAgentIds.length} 个智能体协作`;
+          : isSupervisor
+            ? `Supervisor · ${effAgentIds.length} 个智能体`
+            : `${effAgentIds.length} 个智能体协作`;
         const maAgent: AgentRole = {
           id: 'multi-agent',
           name: summaryName,
-          emoji: isWorkflow ? '🧩' : '🤖',
-          color: '#7c86ff',
           goal: '',
           systemPrompt: '',
           producesCode: true,
@@ -811,7 +837,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         };
 
         setRun(sid, { live: { agent: maAgent, content: '', phase: 'thinking' }, liveFiles: [] });
-        appendLog(sid, 'agent', `🤖 ${summaryName} 开始协作…`);
+        appendLog(sid, 'agent', `${summaryName} 开始协作…`);
 
         // 远端模式：把远端实例 url/token 传给 runner，让它打到远端的 /api/multi-agent/run。
         const remoteUrl = cfg.mode === 'remote' ? cfg.remote.url : undefined;
@@ -831,6 +857,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             const stream = runMultiAgent(
               {
                 task: goal,
+                mode: effMaMode,
                 agentIds: isWorkflow ? undefined : effAgentIds,
                 workflowId: isWorkflow ? (effWorkflowId || undefined) : undefined,
                 sid,
@@ -844,6 +871,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
             );
             for await (const ev of stream) {
               switch (ev.type) {
+                case 'run_start':
+                  maRunIdRefs.current[sid] = ev.runId;
+                  appendLog(sid, 'info', `Run ${ev.runId.slice(0, 12)}… · 模式 ${ev.mode}`);
+                  break;
+                case 'supervisor_start':
+                  appendLog(sid, 'info', `Supervisor 开始 · 智能体池 ${ev.agentPool.length} 个，最多 ${ev.maxIterations} 轮`);
+                  break;
+                case 'supervisor_decision':
+                  appendLog(sid, 'info', `[监督] ${ev.action}: ${ev.reason}`);
+                  break;
                 case 'plan':
                   appendLog(sid, 'info', `执行计划：${ev.total} 步${ev.workflow ? ` · 工作流「${ev.workflow.name}」` : ''}`);
                   break;
@@ -851,8 +888,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
                   const prev = maMeta.get(ev.agentId);
                   const meta = {
                     name: ev.agentName || prev?.name || '智能体',
-                    emoji: ev.emoji || prev?.emoji || '🤖',
-                    color: ev.color || prev?.color || '#7c86ff',
                     cliId: ev.cliId || prev?.cliId || 'claude',
                     producesCode: prev?.producesCode ?? true,
                   };
@@ -861,15 +896,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
                   const agent: AgentRole = {
                     id: ev.agentId,
                     name: meta.name,
-                    emoji: meta.emoji,
-                    color: meta.color,
                     goal: '',
                     systemPrompt: '',
                     producesCode: meta.producesCode,
                     enabled: true,
                   };
                   setRun(sid, { live: { agent, content: '', phase: 'thinking' }, liveFiles: [] });
-                  appendLog(sid, 'agent', `[${ev.index + 1}/${ev.total}] ${agent.emoji} ${agent.name} 开始工作…`);
+                  appendLog(sid, 'agent', `[${ev.index + 1}/${ev.total}] ${agent.name} 开始工作…`);
                   break;
                 }
                 case 'delta': {
@@ -894,14 +927,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
                     content,
                     agentId: ev.agentId,
                     agentName: meta?.name || ev.agentName,
-                    emoji: meta?.emoji || '🤖',
-                    color: meta?.color || '#7c86ff',
                     hasCode: meta?.producesCode ?? true,
                   });
-                  appendLog(sid, 'ok', `✔ ${meta?.name || ev.agentName} 完成（退出码 ${ev.exitCode}）`);
+                  appendLog(sid, 'ok', `✔ ${meta?.name || ev.agentName} 完成（${ev.status || 'done'} · 退出码 ${ev.exitCode}）`);
                   setRun(sid, { live: null });
                   break;
                 }
+                case 'node_skipped':
+                  appendLog(sid, 'info', `⏭ ${ev.agentName} 已跳过`);
+                  break;
+                case 'node_files':
+                  if (ev.files.length > 0) {
+                    appendLog(sid, 'info', `📁 中间产物 ${ev.files.length} 个文件`);
+                  }
+                  break;
                 case 'done': {
                   const files = ev.files || [];
                   const previewUrl = ev.previewUrl || null;
@@ -940,6 +979,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           } finally {
             setRun(sid, { running: false, live: null, liveFiles: [] });
             delete abortRefs.current[sid];
+            delete maRunIdRefs.current[sid];
           }
         })();
         return;
@@ -950,8 +990,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const cliAgent: AgentRole = {
           id: 'cli-runner',
           name: 'CLI Agent',
-          emoji: '⚡',
-          color: '#f59e0b',
           goal: '',
           systemPrompt: '',
           producesCode: true,
@@ -959,7 +997,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         };
 
         setRun(sid, { live: { agent: cliAgent, content: '', phase: 'thinking' }, liveFiles: [] });
-        appendLog(sid, 'agent', `⚡ CLI Agent 开始工作…`);
+        appendLog(sid, 'agent', `CLI Agent 开始工作…`);
 
         const env = createEnvironment(cfg, sid, projectName, sessionWorkDir || undefined);
         if (env) {
@@ -1002,8 +1040,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
                       content: liveContentRefs.current[sid] || 'CLI 执行完成',
                       agentId: 'cli-runner',
                       agentName: 'CLI Agent',
-                      emoji: '⚡',
-                      color: '#f59e0b',
                       hasCode: files.length > 0,
                     });
 
@@ -1068,8 +1104,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const remoteAgent: AgentRole = {
           id: 'remote-runner',
           name: `云端 · ${host}`,
-          emoji: '☁️',
-          color: '#0ea5e9',
           goal: '',
           systemPrompt: '',
           producesCode: true,
@@ -1077,7 +1111,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         };
 
         setRun(sid, { live: { agent: remoteAgent, content: '', phase: 'thinking' }, liveFiles: [] });
-        appendLog(sid, 'agent', `☁️ 云端 Agent (${host}) 开始在服务器上工作…`);
+        appendLog(sid, 'agent', `云端 Agent (${host}) 开始在服务器上工作…`);
 
         (async () => {
           // 对话次数限制：服务端计数，超管不限制。
@@ -1202,8 +1236,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
                       content: liveContentRefs.current[sid] || '云端执行完成',
                       agentId: 'remote-runner',
                       agentName: `云端 · ${host}`,
-                      emoji: '☁️',
-                      color: '#0ea5e9',
                       hasCode: files.length > 0,
                     });
 
@@ -1254,8 +1286,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const sshAgent: AgentRole = {
           id: 'ssh-runner',
           name: `SSH · ${cfg.ssh.host}`,
-          emoji: '🔒',
-          color: '#8b5cf6',
           goal: '',
           systemPrompt: '',
           producesCode: true,
@@ -1263,7 +1293,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         };
 
         setRun(sid, { live: { agent: sshAgent, content: '', phase: 'thinking' }, liveFiles: [] });
-        appendLog(sid, 'agent', `🔒 SSH Agent (${cfg.ssh.host}) 开始工作…`);
+        appendLog(sid, 'agent', `SSH Agent (${cfg.ssh.host}) 开始工作…`);
 
         const env = createEnvironment(cfg, sid, projectName);
         if (env) {
@@ -1306,8 +1336,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
                       content: liveContentRefs.current[sid] || 'SSH 执行完成',
                       agentId: 'ssh-runner',
                       agentName: `SSH · ${cfg.ssh.host}`,
-                      emoji: '🔒',
-                      color: '#8b5cf6',
                       hasCode: files.length > 0,
                     });
 
@@ -1383,7 +1411,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
               liveContentRefs.current[sid] = '';
               codeAgentRefs.current[sid] = agent.producesCode;
               setRun(sid, { live: { agent, content: '', phase: 'thinking' }, liveFiles: [] });
-              appendLog(sid, 'agent', `${agent.emoji} ${agent.name} 开始工作…`);
+              appendLog(sid, 'agent', `${agent.name} 开始工作…`);
               if (agent.producesCode && sid === currentIdRef.current) setActiveTab('code');
             },
             onAgentDelta: (t) => {
@@ -1406,8 +1434,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 content,
                 agentId: agent.id,
                 agentName: agent.name,
-                emoji: agent.emoji,
-                color: agent.color,
                 hasCode: Boolean(parsed && parsed.files.length > 0),
               });
               if (!agent.producesCode && !firstNonCodeSummary) {
@@ -1452,7 +1478,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         });
       })();
     },
-    [agents, appendLog, appendMessage, current, envConfig, patchCurrent, renameSession, runPreviewBuild, runs, sessions, setRun, selectedAgentIds, activeWorkflowId, customAgents, workflows],
+    [agents, appendLog, appendMessage, current, envConfig, patchCurrent, renameSession, runPreviewBuild, runs, sessions, setRun, selectedAgentIds, activeWorkflowId, multiAgentMode, customAgents, workflows],
   );
 
   const clearError = useCallback(() => setRun(currentIdRef.current, { error: null }), [setRun]);
@@ -1462,11 +1488,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     (workflowId: string, text: string) => {
       const goal = text.trim();
       if (!goal) return;
-      // 切到终端 tab 实时看运行日志。
       setActiveTab('terminal');
-      send(goal, 'replan', undefined, { workflowId });
+      const sid = currentIdRef.current;
+      if (!sid) return;
+      const r = runs[sid] || IDLE;
+      if (r.running || r.building) {
+        setQueues((prev) => ({
+          ...prev,
+          [sid]: [...(prev[sid] || []), { id: uid('q'), text: goal, mode: 'replan', workflowId, maMode: 'workflow' }],
+        }));
+        appendLog(sid, 'info', '工作流已加入队列，当前任务完成后自动执行');
+        return;
+      }
+      send(goal, 'replan', undefined, { workflowId, mode: 'workflow' });
     },
-    [send],
+    [send, runs, appendLog],
   );
 
   const isRunning = useCallback(
@@ -1507,7 +1543,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (q.length === 0) return;
     const [next, ...rest] = q;
     setQueues((prev) => ({ ...prev, [sid]: rest }));
-    send(next.text, next.mode);
+    send(next.text, next.mode, undefined, {
+      workflowId: next.workflowId,
+      mode: next.maMode ?? (next.workflowId ? 'workflow' : undefined),
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runs, queues, current]);
 
@@ -1633,6 +1672,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     workflows,
     selectedAgentIds,
     activeWorkflowId,
+    multiAgentMode,
+    setMultiAgentMode,
     toggleSelectedAgent,
     clearSelectedAgents,
     setActiveWorkflowId: setActiveWorkflowIdCb,

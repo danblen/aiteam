@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../store/AppProvider';
-import { type Workflow, type WorkflowStep, type CustomAgent, AGENT_EMOJIS, AGENT_COLORS, newWorkflowTemplate, newStepTemplate, cliLabel } from '../../lib/custom-agents';
+import { type Workflow, type WorkflowStep, type CustomAgent, newWorkflowTemplate, newStepTemplate, cliLabel } from '../../lib/custom-agents';
 
 /** 取智能体角色提示词的前若干字，用作下拉框里区分同名智能体的副标识。 */
 function roleSnippet(a: CustomAgent): string {
@@ -11,7 +11,38 @@ function roleSnippet(a: CustomAgent): string {
 /** 下拉框里每个智能体的展示文案：名称为主，角色为辅（不再以 CLI 作为区分依据）。 */
 function agentOptionText(a: CustomAgent): string {
   const role = roleSnippet(a);
-  return `${a.emoji} ${a.name || '未命名'}（${role}）`;
+  return `${a.name || '未命名'}（${role}）`;
+}
+
+/** 步骤是否配置了非默认高级选项（用于摘要徽章）。 */
+function stepHasAdvanced(s: WorkflowStep): boolean {
+  return Boolean(
+    (s.dependsOn && s.dependsOn.length > 0)
+    || (s.condition && s.condition.trim())
+    || (s.retry?.maxAttempts && s.retry.maxAttempts > 1)
+    || (s.timeoutMs && s.timeoutMs > 0)
+    || (s.fileScope && s.fileScope.length > 0)
+    || s.readOnly
+    || (s.onFailure && s.onFailure !== 'continue'),
+  );
+}
+
+/** 高级编排摘要徽章文案。 */
+function stepAdvancedBadges(s: WorkflowStep, _stepIndex: number, allSteps: WorkflowStep[]): string[] {
+  const badges: string[] = [];
+  if (s.readOnly) badges.push('只读·可并行');
+  if (s.fileScope?.length) badges.push(`域 ${s.fileScope.length}`);
+  if (s.dependsOn?.length) {
+    const nums = s.dependsOn.map((id) => allSteps.findIndex((x) => x.id === id) + 1).filter((n) => n > 0);
+    badges.push(nums.length ? `依赖 #${nums.join(', #')}` : '自定义依赖');
+  }
+  if (s.condition?.trim()) badges.push('条件');
+  if ((s.retry?.maxAttempts ?? 1) > 1) badges.push(`重试×${s.retry!.maxAttempts}`);
+  if (s.timeoutMs && s.timeoutMs > 0) badges.push(`${Math.round(s.timeoutMs / 1000)}s`);
+  if (s.onFailure && s.onFailure !== 'continue') {
+    badges.push(s.onFailure === 'abort' ? '失败中止' : '失败跳过下游');
+  }
+  return badges;
 }
 
 /**
@@ -172,8 +203,6 @@ export default function WorkflowsTab() {
             {workflows.map((w) => {
               const d = drafts[w.id] || {};
               const name = d.name ?? w.name;
-              const emoji = d.emoji ?? w.emoji;
-              const color = d.color ?? w.color;
               const steps = d.steps ?? w.steps;
               return (
                 <div
@@ -181,9 +210,6 @@ export default function WorkflowsTab() {
                   className={`agent-row ${w.id === selectedId ? 'active' : ''}`}
                   onClick={() => setSelectedId(w.id)}
                 >
-                  <span className="agent-emoji" style={{ background: color + '22', color }}>
-                    {emoji}
-                  </span>
                   <div className="agent-row-text">
                     <span className="agent-row-name">
                       {name || '未命名'}
@@ -217,39 +243,10 @@ export default function WorkflowsTab() {
                 </div>
               </div>
 
-              <div className="field-row">
-                <div className="field">
-                  <label>图标</label>
-                  <div className="emoji-picker">
-                    {AGENT_EMOJIS.map((e) => (
-                      <button
-                        key={e}
-                        className={selected.emoji === e ? 'sel' : ''}
-                        onClick={() => patch(selected.id, { emoji: e })}
-                      >
-                        {e}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="field">
-                  <label>主题色</label>
-                  <div className="color-picker">
-                    {AGENT_COLORS.map((col) => (
-                      <button
-                        key={col}
-                        className={selected.color === col ? 'sel' : ''}
-                        style={{ background: col }}
-                        onClick={() => patch(selected.id, { color: col })}
-                      />
-                    ))}
-                  </div>
-                </div>
-              </div>
-
               <div className="wf-steps">
                 <div className="wf-steps-head">
-                  <span>步骤序列（从上到下依次执行）</span>
+                  <span>步骤序列</span>
+                  <span className="wf-steps-sub">默认顺序执行；展开「高级编排」可配置依赖与并行</span>
                 </div>
 
                 {(selected.steps || []).length === 0 && (
@@ -281,8 +278,14 @@ export default function WorkflowsTab() {
                             )}
                           </div>
                           <div className="field grow">
-                            <label>
-                              任务模板（<code>{'{{input}}'}</code> 用户输入 · <code>{'{{prev}}'}</code> 上步产出）
+                            <label className="wf-label-row">
+                              <span>任务模板</span>
+                              <span
+                                className="wf-var-hint"
+                                title="支持 {{input}}、{{prev}}、{{prev.files}}、{{nodes.x.contract.summary}}、{{workspace_files}}"
+                              >
+                                变量 ?
+                              </span>
                             </label>
                             <input
                               value={s.taskTemplate}
@@ -293,14 +296,137 @@ export default function WorkflowsTab() {
                         </div>
                         {agent && (
                           <div className="wf-step-meta">
-                            <span className="agent-emoji sm" style={{ background: agent.color + '22', color: agent.color }}>
-                              {agent.emoji}
-                            </span>
                             <span className="wf-step-meta-name">{agent.name}</span>
                             <span className="wf-step-meta-role">{roleSnippet(agent)}</span>
                             <span className="code-tag">{cliLabel(agent.cliId)}</span>
                           </div>
                         )}
+                        <details className="wf-step-advanced">
+                          <summary className="wf-adv-summary">
+                            <span className="wf-adv-summary-title">高级编排</span>
+                            <span className="wf-adv-badges">
+                              {stepAdvancedBadges(s, i, selected.steps || []).map((b) => (
+                                <span key={b} className="wf-adv-badge">{b}</span>
+                              ))}
+                              {!stepHasAdvanced(s) && (
+                                <span className="wf-adv-badge muted">默认顺序执行</span>
+                              )}
+                            </span>
+                          </summary>
+                          <div className="wf-adv-panel">
+                            <section className="wf-adv-section">
+                              <div className="wf-adv-section-title">并行与文件域</div>
+                              <div className="wf-adv-grid">
+                                <div className="field grow">
+                                  <label>写文件域</label>
+                                  <input
+                                    value={(s.fileScope || []).join(', ')}
+                                    onChange={(e) => updateStep(selected.id, s.id, {
+                                      fileScope: e.target.value.split(',').map((x) => x.trim()).filter(Boolean),
+                                    })}
+                                    placeholder="glob 前缀，逗号分隔；空 = 独占工作区"
+                                  />
+                                  <span className="field-hint">例：src/components, src/api</span>
+                                </div>
+                                <div className="field wf-adv-checks">
+                                  <label className="check-line">
+                                    <input
+                                      type="checkbox"
+                                      checked={s.readOnly === true}
+                                      onChange={(e) => updateStep(selected.id, s.id, { readOnly: e.target.checked })}
+                                    />
+                                    只读步骤（可与其他步骤并行）
+                                  </label>
+                                </div>
+                              </div>
+                            </section>
+
+                            <section className="wf-adv-section">
+                              <div className="wf-adv-section-title">依赖关系</div>
+                              <p className="wf-adv-desc">不选 = 等上一步完成；选中多个 = 仅等指定步骤，无依赖关系的步骤可并行。</p>
+                              <div className="dep-chips">
+                                {(selected.steps || []).map((other, j) => {
+                                  if (other.id === s.id) return null;
+                                  const deps = s.dependsOn || [];
+                                  const on = deps.includes(other.id);
+                                  const otherAgent = agents.find((a) => a.id === other.agentId);
+                                  return (
+                                    <button
+                                      key={other.id}
+                                      type="button"
+                                      className={`dep-chip${on ? ' on' : ''}`}
+                                      onClick={() => {
+                                        const next = on ? deps.filter((d) => d !== other.id) : [...deps, other.id];
+                                        updateStep(selected.id, s.id, { dependsOn: next });
+                                      }}
+                                      title={otherAgent?.name || `步骤 ${j + 1}`}
+                                    >
+                                      <span className="dep-chip-num">{j + 1}</span>
+                                      {otherAgent && <span className="dep-chip-name">{otherAgent.name}</span>}
+                                    </button>
+                                  );
+                                })}
+                                {(selected.steps || []).length <= 1 && (
+                                  <span className="wf-adv-empty">添加更多步骤后可配置依赖</span>
+                                )}
+                              </div>
+                            </section>
+
+                            <section className="wf-adv-section">
+                              <div className="wf-adv-section-title">条件 · 重试 · 超时</div>
+                              <div className="wf-adv-grid wf-adv-grid-3">
+                                <div className="field grow span-2">
+                                  <label>执行条件</label>
+                                  <input
+                                    value={s.condition || ''}
+                                    onChange={(e) => updateStep(selected.id, s.id, { condition: e.target.value })}
+                                    placeholder="留空 = 总是执行；例 nodes.s1.exitCode == 0"
+                                  />
+                                </div>
+                                <div className="field">
+                                  <label>失败后</label>
+                                  <select
+                                    value={s.onFailure || 'continue'}
+                                    onChange={(e) => updateStep(selected.id, s.id, {
+                                      onFailure: e.target.value as WorkflowStep['onFailure'],
+                                    })}
+                                  >
+                                    <option value="continue">继续后续</option>
+                                    <option value="skip-dependents">跳过依赖方</option>
+                                    <option value="abort">中止工作流</option>
+                                  </select>
+                                </div>
+                                <div className="field">
+                                  <label>重试</label>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={5}
+                                    value={s.retry?.maxAttempts ?? 1}
+                                    onChange={(e) => updateStep(selected.id, s.id, {
+                                      retry: {
+                                        maxAttempts: Math.max(1, Math.min(5, Number(e.target.value) || 1)),
+                                        backoffMs: s.retry?.backoffMs ?? 0,
+                                      },
+                                    })}
+                                  />
+                                </div>
+                                <div className="field">
+                                  <label>超时（秒）</label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={Math.round((s.timeoutMs || 0) / 1000)}
+                                    onChange={(e) => updateStep(selected.id, s.id, {
+                                      timeoutMs: Math.max(0, Number(e.target.value) || 0) * 1000,
+                                    })}
+                                    placeholder="0 = 默认 5 分钟"
+                                  />
+                                </div>
+                              </div>
+                            </section>
+                          </div>
+                        </details>
                       </div>
                       <div className="wf-step-ctl">
                         <button className="mini" title="上移" onClick={() => moveStep(selected.id, s.id, -1)} disabled={i === 0}>↑</button>

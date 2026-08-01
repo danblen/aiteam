@@ -1,7 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import express from 'express';
-import { runCLI, scanWorkspace } from './cli.js';
+import { scanWorkspace } from './cli.js';
 import { startDevServer } from './preview-dev.js';
 import { ensureAdminForSensitive, checkConversationLimit } from './auth.js';
 import { ensureIsolatedUser, secureWorkspace } from './user-isolate.js';
@@ -19,31 +19,47 @@ import {
   deleteWorkflow,
   SUPPORTED_CLIS,
 } from './agents-store.js';
+import {
+  compileGraph,
+  executeGraph,
+  executeSupervisor,
+  validateGraph,
+  DEFAULT_STEP_TIMEOUT_MS,
+} from '../orchestrator/index.js';
+import { executeAgent } from './agents/runner.js';
+import { listAdapters, availableClis } from '../cli/index.js';
+import {
+  createRun,
+  appendRunEvent,
+  getRun,
+  getEventsSince,
+  abortRun,
+  finishRun,
+  getAbortSignal,
+} from './run-log.js';
 
 /**
- * 多智能体云模式编排：
- *   /api/agents         CRUD 自定义智能体（CLI + 自定义 system prompt + model）
- *   /api/workflows      CRUD 工作流（有序步骤，每步绑定一个智能体 + 任务模板）
- *   /api/multi-agent/run  SSE：顺序执行多个智能体 / 一个工作流，线程化产出
+ * 多智能体编排 —— API 层。
  *
- * 与单 CLI 模式（/api/env/local/run）共享同一套工作目录、沙箱隔离、预览机制，
- * 区别在于：按用户选定的「智能体序列」依次运行，每步把上一步产出带入下一步，
- * 最终统一扫描文件 + 启动预览。
+ * 运行模式：
+ *   - workflow：预定义工作流（DAG，支持并行 + fileScope）
+ *   - agents：ad-hoc 智能体序列
+ *   - supervisor：开放任务，监督者动态调度智能体池
  */
 
-function sendSSE(res, event, data) {
+function sendSSE(res, event, data, runId) {
   if (res.writableEnded) return;
+  if (runId) {
+    const appended = appendRunEvent(runId, event, data);
+    if (appended) {
+      res.write(appended.frame);
+      return;
+    }
+  }
   res.write(`event: ${event}\n`);
   res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
-/**
- * 解析并校验前端选定的智能体 / 工作流，返回「执行计划」：
- *   [{ agent, task }, ...]
- * - 传 workflowId：按工作流步骤解析，taskTemplate 用 {{input}} / {{prev}} 插值
- * - 否则用 agentIds：第一个 agent 直接吃用户任务，后续 agent 带上前序产出
- * 缺失的 agent 会被跳过并发出告警（不阻断流程）。
- */
 function buildPlan(req, { task, agentIds, workflowId }) {
   const plan = [];
   const warnings = [];
@@ -59,12 +75,11 @@ function buildPlan(req, { task, agentIds, workflowId }) {
         warnings.push(`步骤「${step.id}」引用的智能体已删除，已跳过`);
         continue;
       }
-      plan.push({ agent, taskTemplate: step.taskTemplate || '' });
+      plan.push({ agent, taskTemplate: step.taskTemplate || '', step });
     }
     return { plan, warnings, workflow: wf };
   }
 
-  // ad-hoc 智能体序列
   const ids = Array.isArray(agentIds) ? agentIds.filter(Boolean) : [];
   for (const id of ids) {
     const agent = getAgentById(req, id);
@@ -72,225 +87,371 @@ function buildPlan(req, { task, agentIds, workflowId }) {
       warnings.push(`智能体「${id}」不存在，已跳过`);
       continue;
     }
-    plan.push({ agent, taskTemplate: '' });
+    plan.push({
+      agent,
+      taskTemplate: '',
+      step: {
+        id: `adhoc-${plan.length}`,
+        agentId: id,
+        taskTemplate: '',
+        dependsOn: [],
+        condition: '',
+        retry: { maxAttempts: 1, backoffMs: 0 },
+        timeoutMs: 0,
+        fileScope: agent.defaultFileScope || [],
+        readOnly: agent.readOnly === true,
+        onFailure: 'continue',
+      },
+    });
   }
   return { plan, warnings, workflow: null };
 }
 
-/**
- * 把任务模板插值成实际任务文本。
- *   {{input}} → 用户原始输入
- *   {{prev}}  → 上一个智能体的产出
- * 无模板时：首步用用户输入，后续步把前序产出拼进任务。
- */
-function renderTask(template, userInput, prevOutput) {
-  if (!template || !template.trim()) {
-    if (!prevOutput) return userInput;
-    return `${userInput}\n\n【上一个智能体的产出】\n${prevOutput}`;
-  }
-  return template
-    .replace(/\{\{\s*input\s*\}\}/g, userInput || '')
-    .replace(/\{\{\s*prev\s*\}\}/g, prevOutput || '');
+function makeCallbacks(res, runId, graph, getAgent, workDir) {
+  return {
+    onPlan: () => {},
+    onNodeStart: (node, attempt) => {
+      const a = getAgent(node.agentId) || {};
+      const idx = graph?.nodes?.findIndex((n) => n.id === node.id) ?? -1;
+      sendSSE(res, 'agent_start', {
+        index: idx, total: graph?.nodes?.length ?? 0, nodeId: node.id,
+        agentId: node.agentId, agentName: a.name || node.agentId,
+        emoji: a.emoji || '🤖', color: a.color || '#9aa4b6', cliId: a.cliId || '',
+        attempt, readOnly: node.readOnly, fileScope: node.fileScope || [],
+      }, runId);
+      sendSSE(res, 'status', {
+        text: `[${idx >= 0 ? idx + 1 : '?'}] ${a.emoji || ''} ${a.name || node.agentId} 开始${attempt > 1 ? `（第 ${attempt} 次）` : ''}…`,
+        nodeId: node.id, agentId: node.agentId,
+      }, runId);
+    },
+    onNodeDelta: (node, text) => {
+      const idx = graph?.nodes?.findIndex((n) => n.id === node.id) ?? -1;
+      sendSSE(res, 'delta', { text, index: idx, nodeId: node.id, agentId: node.agentId }, runId);
+    },
+    onNodeStatus: (node, text) => {
+      sendSSE(res, 'status', { text, nodeId: node.id, agentId: node.agentId }, runId);
+    },
+    onNodeDone: (node, result) => {
+      const idx = graph?.nodes?.findIndex((n) => n.id === node.id) ?? -1;
+      const a = getAgent(node.agentId) || {};
+      const files = scanWorkspace(workDir);
+      sendSSE(res, 'node_files', { nodeId: node.id, index: idx, files: files.map((f) => f.path) }, runId);
+      sendSSE(res, 'agent_done', {
+        index: idx, total: graph?.nodes?.length ?? 0, nodeId: node.id,
+        agentId: node.agentId, agentName: a.name || node.agentId,
+        exitCode: result.exitCode, output: result.output,
+        status: result.status, durationMs: result.durationMs,
+        contract: result.contract,
+      }, runId);
+    },
+    onNodeSkipped: (node) => {
+      const idx = graph?.nodes?.findIndex((n) => n.id === node.id) ?? -1;
+      const a = getAgent(node.agentId) || {};
+      sendSSE(res, 'node_skipped', { nodeId: node.id, index: idx, agentId: node.agentId, agentName: a.name || node.agentId }, runId);
+      sendSSE(res, 'status', { text: `[${idx + 1}] ${a.name || node.agentId} 被跳过`, nodeId: node.id, agentId: node.agentId }, runId);
+    },
+    onNodeError: (node, err) => {
+      const idx = graph?.nodes?.findIndex((n) => n.id === node.id) ?? -1;
+      sendSSE(res, 'error', {
+        text: `${getAgent(node.agentId)?.name || node.agentId} 失败: ${err.message || err}`,
+        index: idx, nodeId: node.id, agentId: node.agentId,
+      }, runId);
+    },
+    onSupervisorStart: (info) => {
+      sendSSE(res, 'supervisor_start', info, runId);
+    },
+    onSupervisorDecision: (info) => {
+      sendSSE(res, 'supervisor_decision', info, runId);
+    },
+    onSupervisorDelta: (info) => {
+      sendSSE(res, 'delta', { text: info.text, index: -1, nodeId: 'supervisor', agentId: 'supervisor' }, runId);
+    },
+    onSupervisorStatus: (info) => {
+      sendSSE(res, 'status', { text: info.text, nodeId: 'supervisor' }, runId);
+    },
+  };
 }
 
-/**
- * 挂载多智能体相关路由。
- * @param {express.Application} app
- */
-export function mountMultiAgent(app) {
-  // ===================== Custom Agents CRUD =====================
+async function runOrchestration(req, res, params) {
+  const {
+    task, agentIds, workflowId, sid, reqWorkDir, projectName, direct,
+    mode = 'agents', supervisorAgentId, maxIterations,
+  } = params;
 
-  app.get('/api/agents', (req, res) => {
-    res.json({ ok: true, agents: listAgents(req), supportedClis: SUPPORTED_CLIS });
+  const runMode = mode === 'supervisor' ? 'supervisor'
+    : (workflowId ? 'workflow' : 'agents');
+
+  const { plan, warnings, workflow } = buildPlan(req, { task, agentIds, workflowId });
+
+  if (runMode === 'supervisor') {
+    const pool = Array.isArray(agentIds) ? agentIds.filter(Boolean) : [];
+    if (pool.length === 0) {
+      return { error: 'Supervisor 模式需要选择至少一个智能体作为执行池', status: 400 };
+    }
+  } else if (plan.length === 0) {
+    return { error: warnings[0] || '没有可执行的智能体', status: 400 };
+  }
+
+  const workDir = resolveProjectDir(reqWorkDir, projectName, sid, req.user?.email, direct);
+  if (!isWithin(WORKSPACES_DIR, workDir) && !ensureAdminForSensitive(req, res)) {
+    return { error: 'forbidden', status: 403 };
+  }
+  fs.mkdirSync(workDir, { recursive: true });
+
+  const runRec = createRun({ sid, task, mode: runMode, workflowId, agentIds });
+  const runId = runRec.id;
+  const signal = getAbortSignal(runId);
+
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  // 断线不中止：仅显式 POST /abort 或客户端 AbortSignal（同连接）才中止
+  sendSSE(res, 'run_start', { runId, mode: runMode }, runId);
+
+  const { uid, ok: isolateOk } = ensureIsolatedUser(sid);
+  if (!isolateOk) {
+    sendSSE(res, 'error', { text: '沙箱用户池已满，无法执行新任务。请稍后再试或关闭未使用的会话。' }, runId);
+    finishRun(runId, 'failed');
+    res.end();
+    return {};
+  }
+  if (uid !== null) secureWorkspace(workDir, uid, sid);
+
+  const agentMap = new Map(plan.map((p) => [p.agent.id, p.agent]));
+  for (const id of (agentIds || [])) {
+    const a = getAgentById(req, id);
+    if (a) agentMap.set(a.id, a);
+  }
+  const getAgent = (id) => agentMap.get(id) || getAgentById(req, id) || null;
+
+  let graph = null;
+  if (runMode !== 'supervisor') {
+    graph = compileGraph({ plan, workflow });
+    const validation = validateGraph(graph);
+    if (!validation.ok) {
+      sendSSE(res, 'error', { text: validation.errors.join('；') }, runId);
+      finishRun(runId, 'failed');
+      res.end();
+      return {};
+    }
+    for (const w of validation.warnings) sendSSE(res, 'status', { text: w }, runId);
+  }
+
+  for (const w of warnings) sendSSE(res, 'status', { text: w }, runId);
+
+  const callbacks = makeCallbacks(res, runId, graph, getAgent, workDir);
+  const execCtx = {
+    input: task,
+    workDir,
+    signal,
+    uid,
+    getAgent,
+    executeNode: executeAgent,
+    scanFiles: () => scanWorkspace(workDir),
+    defaultTimeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  };
+
+  try {
+    if (runMode === 'supervisor') {
+      const pool = Array.isArray(agentIds) ? agentIds.filter(Boolean) : [];
+      sendSSE(res, 'status', { text: `Supervisor 开放任务模式：智能体池 ${pool.length} 个，最多 ${maxIterations || 12} 轮…` }, runId);
+      const { blackboard, decisions } = await executeSupervisor({
+        ...execCtx,
+        agentPool: pool,
+        supervisorAgentId,
+        maxIterations: maxIterations || undefined,
+      }, callbacks);
+
+      if (signal?.aborted) {
+        sendSSE(res, 'status', { text: '任务已被中止' }, runId);
+        finishRun(runId, 'aborted');
+        res.end();
+        return {};
+      }
+
+      const files = scanWorkspace(workDir);
+      sendSSE(res, 'status', { text: `Supervisor 完成 ${decisions.length} 轮决策，扫描到 ${files.length} 个文件` }, runId);
+      await finishWithPreview(res, runId, sid, workDir, files);
+      return {};
+    }
+
+    sendSSE(res, 'plan', {
+      workflow: workflow ? { id: workflow.id, name: workflow.name, emoji: workflow.emoji, color: workflow.color } : null,
+      steps: graph.nodes.map((n, i) => {
+        const a = getAgent(n.agentId) || {};
+        return {
+          index: i,
+          nodeId: n.id,
+          agentId: n.agentId,
+          agentName: a.name || n.agentId,
+          emoji: a.emoji || '🤖',
+          color: a.color || '#9aa4b6',
+          cliId: a.cliId || '',
+          dependsOn: n.dependsOn,
+          readOnly: n.readOnly,
+          fileScope: n.fileScope,
+        };
+      }),
+      total: graph.nodes.length,
+    }, runId);
+
+    sendSSE(res, 'status', { text: `将在 ${workDir} 中编排执行 ${graph.nodes.length} 个节点（支持并行）…` }, runId);
+
+    const { blackboard, aborted } = await executeGraph(graph, execCtx, callbacks);
+
+    if (signal?.aborted || aborted) {
+      sendSSE(res, 'status', { text: '多智能体执行已被中止' }, runId);
+      finishRun(runId, 'aborted');
+      res.end();
+      return {};
+    }
+
+    const files = scanWorkspace(workDir);
+    const doneCount = Object.values(blackboard.nodes).filter((r) => r.status === 'done').length;
+    const skipCount = Object.values(blackboard.nodes).filter((r) => r.status === 'skipped').length;
+    sendSSE(res, 'status', { text: `编排完成：${doneCount} 成功 / ${skipCount} 跳过，扫描到 ${files.length} 个文件` }, runId);
+    await finishWithPreview(res, runId, sid, workDir, files);
+    return {};
+  } catch (err) {
+    if (signal?.aborted) {
+      sendSSE(res, 'status', { text: '多智能体执行已被中止' }, runId);
+      finishRun(runId, 'aborted');
+    } else {
+      sendSSE(res, 'error', { text: err.message || '多智能体执行失败' }, runId);
+      finishRun(runId, 'failed');
+    }
+    if (!res.writableEnded) res.end();
+    return {};
+  }
+}
+
+async function finishWithPreview(res, runId, sid, workDir, files) {
+  let previewUrl = null;
+  if (files.length > 0) {
+    try {
+      previewUrl = await startDevServer(sid, workDir);
+      sendSSE(res, 'status', { text: '预览已就绪' }, runId);
+    } catch (err) {
+      sendSSE(res, 'status', { text: `启动预览: ${err.message}` }, runId);
+    }
+  }
+  sendSSE(res, 'done', { files, previewUrl, workDir, runId }, runId);
+  finishRun(runId, 'done');
+  if (!res.writableEnded) res.end();
+}
+
+/** @param {express.Application} app */
+export function mountMultiAgent(app) {
+  app.get('/api/agents', async (req, res) => {
+    const installed = await availableClis().catch(() => []);
+    res.json({
+      ok: true,
+      agents: listAgents(req),
+      supportedClis: SUPPORTED_CLIS,
+      adapters: listAdapters(),
+      installedClis: installed,
+    });
   });
 
-  app.post('/api/agents', (req, res) => {
-    const agent = createAgent(req, req.body || {});
+  app.post('/api/agents', async (req, res) => {
+    const agent = await createAgent(req, req.body || {});
     res.json({ ok: true, agent });
   });
 
-  app.put('/api/agents/:id', (req, res) => {
-    const updated = updateAgent(req, req.params.id, req.body || {});
+  app.put('/api/agents/:id', async (req, res) => {
+    const updated = await updateAgent(req, req.params.id, req.body || {});
     if (!updated) return res.status(404).json({ error: '智能体不存在' });
     res.json({ ok: true, agent: updated });
   });
 
-  app.delete('/api/agents/:id', (req, res) => {
-    const ok = deleteAgent(req, req.params.id);
+  app.delete('/api/agents/:id', async (req, res) => {
+    const ok = await deleteAgent(req, req.params.id);
     if (!ok) return res.status(404).json({ error: '智能体不存在' });
     res.json({ ok: true });
   });
 
-  // ===================== Workflows CRUD =====================
-
   app.get('/api/workflows', (req, res) => {
-    // 附带 agent 清单，便于前端在编辑器里下拉选择。
     res.json({ ok: true, workflows: listWorkflows(req), agents: listAgents(req) });
   });
 
-  app.post('/api/workflows', (req, res) => {
-    const wf = createWorkflow(req, req.body || {});
+  app.post('/api/workflows', async (req, res) => {
+    const wf = await createWorkflow(req, req.body || {});
     res.json({ ok: true, workflow: wf });
   });
 
-  app.put('/api/workflows/:id', (req, res) => {
-    const updated = updateWorkflow(req, req.params.id, req.body || {});
+  app.put('/api/workflows/:id', async (req, res) => {
+    const updated = await updateWorkflow(req, req.params.id, req.body || {});
     if (!updated) return res.status(404).json({ error: '工作流不存在' });
     res.json({ ok: true, workflow: updated });
   });
 
-  app.delete('/api/workflows/:id', (req, res) => {
-    const ok = deleteWorkflow(req, req.params.id);
+  app.delete('/api/workflows/:id', async (req, res) => {
+    const ok = await deleteWorkflow(req, req.params.id);
     if (!ok) return res.status(404).json({ error: '工作流不存在' });
     res.json({ ok: true });
   });
 
-  // ===================== Multi-agent run (SSE) =====================
+  // 显式中止 run（断线不会触发此逻辑）
+  app.post('/api/multi-agent/abort', (req, res) => {
+    const { runId } = req.body || {};
+    if (!runId) return res.status(400).json({ error: '缺少 runId' });
+    const ok = abortRun(runId);
+    res.json({ ok, aborted: ok });
+  });
 
-  app.post('/api/multi-agent/run', async (req, res) => {
-    const { task, agentIds, workflowId, sid, workDir: reqWorkDir, projectName, direct } = req.body || {};
-    if (!task || !sid) {
-      return res.status(400).json({ error: '缺少参数: task, sid' });
-    }
-    if (!workflowId && (!Array.isArray(agentIds) || agentIds.filter(Boolean).length === 0)) {
-      return res.status(400).json({ error: '请至少选择一个智能体或一个工作流' });
-    }
+  // SSE 断线重连：重放 runId 下 since 之后的事件
+  app.get('/api/multi-agent/run/:runId/events', (req, res) => {
+    const since = Number(req.query.since) || Number(req.headers['last-event-id']) || 0;
+    const replay = getEventsSince(req.params.runId, since);
+    if (!replay) return res.status(404).json({ error: 'run 不存在或已过期' });
 
-    // 对话次数限制：仅做闸门检查（计数由 /api/conversation/start 统一管理）。
-    if (!checkConversationLimit(req, res)) return;
-
-    // 解析执行计划（智能体序列 + 每步任务模板）。
-    const { plan, warnings, workflow } = buildPlan(req, { task, agentIds, workflowId });
-    if (plan.length === 0) {
-      return res.status(400).json({ error: warnings[0] || '没有可执行的智能体' });
-    }
-
-    // 解析工作目录（与 /api/env/local/run 完全一致的安全策略）。
-    const workDir = resolveProjectDir(reqWorkDir, projectName, sid, req.user?.email, direct);
-    if (!isWithin(WORKSPACES_DIR, workDir) && !ensureAdminForSensitive(req, res)) return;
-    fs.mkdirSync(workDir, { recursive: true });
-
-    // SSE setup
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders?.();
 
-    const abortController = new AbortController();
-    const onClose = () => { if (!res.writableEnded) abortController.abort(); };
-    res.on('close', onClose);
-
-    // 沙箱用户隔离（与单 CLI 模式共享同一套池子）。
-    const { uid, ok: isolateOk } = ensureIsolatedUser(sid);
-    if (!isolateOk) {
-      sendSSE(res, 'error', { text: '沙箱用户池已满，无法执行新任务。请稍后再试或关闭未使用的会话。' });
-      return res.end();
+    for (const ev of replay.events) {
+      res.write(`id: ${ev.id}\nevent: ${ev.event}\ndata: ${JSON.stringify(ev.data)}\n\n`);
     }
-    if (uid !== null) secureWorkspace(workDir, uid, sid);
+    if (replay.status !== 'running') {
+      res.end();
+    }
+  });
 
-    const stepTotal = plan.length;
-    sendSSE(res, 'plan', {
-      workflow: workflow ? { id: workflow.id, name: workflow.name, emoji: workflow.emoji, color: workflow.color } : null,
-      steps: plan.map((p, i) => ({
-        index: i,
-        agentId: p.agent.id,
-        agentName: p.agent.name,
-        emoji: p.agent.emoji,
-        color: p.agent.color,
-        cliId: p.agent.cliId,
-      })),
-      total: stepTotal,
+  app.post('/api/multi-agent/run', async (req, res) => {
+    const {
+      task, agentIds, workflowId, sid, workDir: reqWorkDir, projectName, direct,
+      mode, supervisorAgentId, maxIterations,
+    } = req.body || {};
+
+    if (!task || !sid) {
+      return res.status(400).json({ error: '缺少参数: task, sid' });
+    }
+
+    const runMode = mode === 'supervisor' ? 'supervisor'
+      : (workflowId ? 'workflow' : 'agents');
+
+    if (runMode === 'supervisor') {
+      if (!Array.isArray(agentIds) || agentIds.filter(Boolean).length === 0) {
+        return res.status(400).json({ error: 'Supervisor 模式需要选择智能体池（agentIds）' });
+      }
+    } else if (!workflowId && (!Array.isArray(agentIds) || agentIds.filter(Boolean).length === 0)) {
+      return res.status(400).json({ error: '请至少选择一个智能体或一个工作流' });
+    }
+
+    if (!checkConversationLimit(req, res)) return;
+
+    const result = await runOrchestration(req, res, {
+      task, agentIds, workflowId, sid,
+      reqWorkDir, projectName, direct,
+      mode: runMode, supervisorAgentId, maxIterations,
     });
-    for (const w of warnings) sendSSE(res, 'status', { text: w });
 
-    try {
-      sendSSE(res, 'status', { text: `将在 ${workDir} 中依次执行 ${stepTotal} 个智能体…` });
-
-      let prevOutput = '';
-
-      for (let i = 0; i < plan.length; i++) {
-        if (abortController.signal.aborted) break;
-        const { agent, taskTemplate } = plan[i];
-        const stepTask = renderTask(taskTemplate, task, prevOutput);
-
-        sendSSE(res, 'agent_start', {
-          index: i,
-          total: stepTotal,
-          agentId: agent.id,
-          agentName: agent.name,
-          emoji: agent.emoji,
-          color: agent.color,
-          cliId: agent.cliId,
-        });
-        sendSSE(res, 'status', { text: `[${i + 1}/${stepTotal}] ${agent.emoji} ${agent.name}（${agent.cliId}）开始工作…` });
-
-        let stepOutput = '';
-        let stepExit = 0;
-        try {
-          stepExit = await runCLI(agent.cliId, stepTask, workDir, {
-            onDelta: (text) => {
-              stepOutput += text;
-              sendSSE(res, 'delta', { text, index: i, agentId: agent.id });
-            },
-            onStatus: (text) => sendSSE(res, 'status', { text, index: i, agentId: agent.id }),
-            signal: abortController.signal,
-            uid,
-          }, {
-            systemPrompt: agent.systemPrompt,
-            model: agent.model || undefined,
-          });
-        } catch (err) {
-          if (abortController.signal.aborted) {
-            sendSSE(res, 'status', { text: `[${i + 1}/${stepTotal}] 已中止` });
-            break;
-          }
-          sendSSE(res, 'error', { text: `${agent.name} 执行失败: ${err.message || err}`, index: i, agentId: agent.id });
-          // 单步失败不阻断整体：把已有产出带入下一步，继续编排。
-        }
-
-        sendSSE(res, 'agent_done', {
-          index: i,
-          total: stepTotal,
-          agentId: agent.id,
-          agentName: agent.name,
-          exitCode: stepExit,
-          output: stepOutput,
-        });
-
-        // 线程化：把本步产出作为下一步的上下文（截断过长内容，避免 token 爆炸）。
-        prevOutput = stepOutput.length > 6000 ? stepOutput.slice(0, 6000) + '\n…（已截断）' : stepOutput;
-      }
-
-      if (abortController.signal.aborted) {
-        sendSSE(res, 'status', { text: '多智能体执行已被用户中止' });
-        return res.end();
-      }
-
-      // 统一扫描文件 + 启动预览（与单 CLI 模式一致）。
-      const files = scanWorkspace(workDir);
-      sendSSE(res, 'status', { text: `全部智能体完成，扫描到 ${files.length} 个文件` });
-
-      let previewUrl = null;
-      if (files.length > 0) {
-        try {
-          previewUrl = await startDevServer(sid, workDir);
-          sendSSE(res, 'status', { text: '预览已就绪' });
-        } catch (err) {
-          sendSSE(res, 'status', { text: `启动预览: ${err.message}` });
-        }
-      }
-
-      sendSSE(res, 'done', { files, previewUrl, workDir });
-    } catch (err) {
-      if (abortController.signal.aborted) {
-        sendSSE(res, 'status', { text: '多智能体执行已被用户中止' });
-      } else {
-        sendSSE(res, 'error', { text: err.message || '多智能体执行失败' });
-      }
-    } finally {
-      if (!res.writableEnded) res.end();
-      res.off('close', onClose);
+    if (result.error && result.status) {
+      return res.status(result.status).json({ error: result.error });
     }
   });
 }

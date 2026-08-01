@@ -17,6 +17,7 @@ interface Props {
   activeTab: WorkTab;
   streaming: boolean;
   projectDir?: string;
+  codeRefreshKey?: string | number;
   onTabChange: (tab: WorkTab) => void;
 }
 
@@ -33,7 +34,7 @@ const TABS: { id: WorkTab; label: string; icon: string }[] = [
   { id: 'publish', label: '发布', icon: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v9M4 6l4-4 4 4M2 12v2h12v-2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>' },
 ];
 
-function WorkspacePanel({ files, activeTab, streaming, projectDir, onTabChange }: Props) {
+function WorkspacePanel({ files, activeTab, streaming, projectDir, codeRefreshKey, onTabChange }: Props) {
   return (
     <section className="workspace">
       <div className="workspace-bar">
@@ -54,7 +55,14 @@ function WorkspacePanel({ files, activeTab, streaming, projectDir, onTabChange }
       <div className="workspace-body">
         {activeTab === 'overview' && <OverviewTab />}
         {activeTab === 'preview' && <PreviewTab />}
-        {activeTab === 'code' && <CodeTab files={files} streaming={streaming} projectDir={projectDir} />}
+        {activeTab === 'code' && (
+          <CodeTab
+            files={files}
+            streaming={streaming}
+            projectDir={projectDir}
+            refreshKey={codeRefreshKey}
+          />
+        )}
         {activeTab === 'cloud' && <CloudTab />}
         {activeTab === 'files' && <FilesTab onOpenInEditor={() => onTabChange('code')} />}
         {activeTab === 'terminal' && <TerminalTab />}

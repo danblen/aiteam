@@ -3,6 +3,7 @@ dist
 dist-ssr
 .env
 .env.local
+.secrets/
 *.local
 server/.previews
 server/.published

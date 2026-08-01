@@ -4,8 +4,6 @@ import {
   type CustomAgent,
   type AgentCliId,
   CLI_OPTIONS,
-  AGENT_EMOJIS,
-  AGENT_COLORS,
   newCustomAgentTemplate,
   cliLabel,
 } from '../../lib/custom-agents';
@@ -110,8 +108,6 @@ export default function AgentsTab() {
             {agents.map((a) => {
               const d = drafts[a.id] || {};
               const name = d.name ?? a.name;
-              const emoji = d.emoji ?? a.emoji;
-              const color = d.color ?? a.color;
               const enabled = d.enabled ?? a.enabled;
               const cliId = (d.cliId ?? a.cliId) as AgentCliId;
               return (
@@ -120,9 +116,6 @@ export default function AgentsTab() {
                   className={`agent-row ${a.id === selectedId ? 'active' : ''} ${enabled ? '' : 'off'}`}
                   onClick={() => setSelectedId(a.id)}
                 >
-                  <span className="agent-emoji" style={{ background: color + '22', color }}>
-                    {emoji}
-                  </span>
                   <div className="agent-row-text">
                     <span className="agent-row-name">
                       {name || '未命名'}
@@ -154,39 +147,10 @@ export default function AgentsTab() {
                   >
                     {CLI_OPTIONS.map((c) => (
                       <option key={c.id} value={c.id}>
-                        {c.emoji} {c.name}
+                        {c.name}
                       </option>
                     ))}
                   </select>
-                </div>
-              </div>
-
-              <div className="field">
-                <label>图标</label>
-                <div className="emoji-picker">
-                  {AGENT_EMOJIS.map((e) => (
-                    <button
-                      key={e}
-                      className={selected.emoji === e ? 'sel' : ''}
-                      onClick={() => patch(selected.id, { emoji: e })}
-                    >
-                      {e}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="field">
-                <label>主题色</label>
-                <div className="color-picker">
-                  {AGENT_COLORS.map((col) => (
-                    <button
-                      key={col}
-                      className={selected.color === col ? 'sel' : ''}
-                      style={{ background: col }}
-                      onClick={() => patch(selected.id, { color: col })}
-                    />
-                  ))}
                 </div>
               </div>
 
@@ -217,6 +181,26 @@ export default function AgentsTab() {
                 />
                 该智能体产出最终代码
               </label>
+
+              <label className="check-line">
+                <input
+                  type="checkbox"
+                  checked={selected.readOnly === true}
+                  onChange={(e) => patch(selected.id, { readOnly: e.target.checked })}
+                />
+                只读智能体（review/test，可与其他步骤并行）
+              </label>
+
+              <div className="field">
+                <label>默认写文件域（逗号分隔 glob；工作流步骤可覆盖）</label>
+                <input
+                  value={(selected.defaultFileScope || []).join(', ')}
+                  onChange={(e) => patch(selected.id, {
+                    defaultFileScope: e.target.value.split(',').map((x) => x.trim()).filter(Boolean),
+                  })}
+                  placeholder="例：src/components"
+                />
+              </div>
 
               <label className="check-line">
                 <input

@@ -54,6 +54,18 @@ function writeRegistry(file, reg) {
   }
 }
 
+/**
+ * per-file 串行锁：同一文件的写操作排队执行，避免并发 read-modify-write 丢写。
+ * 进程内 Promise 链实现，足够单实例部署使用。
+ */
+const _locks = new Map(); // file -> Promise chain
+function withLock(file, fn) {
+  const prev = _locks.get(file) || Promise.resolve();
+  const next = prev.then(fn, fn); // 无论前一个成功失败都继续
+  _locks.set(file, next.catch(() => {})); // 吞错避免链断裂
+  return next;
+}
+
 // ---------- CustomAgent ----------
 
 /** 服务端视角的自定义智能体定义。 */
@@ -72,6 +84,8 @@ function normalizeAgent(a) {
     model: a.model ? String(a.model).slice(0, 80) : '',
     enabled: a.enabled !== false,
     producesCode: a.producesCode === true,
+    readOnly: a.readOnly === true,
+    defaultFileScope: normalizeFileScope(a.defaultFileScope),
     createdAt: Number(a.createdAt) || Date.now(),
     updatedAt: Number(a.updatedAt) || Date.now(),
   };
@@ -87,50 +101,87 @@ export function getAgentById(req, id) {
   return listAgents(req).find((a) => a.id === id) || null;
 }
 
-export function createAgent(req, data) {
-  const owner = ownerKey(req);
-  const reg = readRegistry(AGENTS_FILE);
-  const list = reg[owner] || [];
-  const agent = normalizeAgent({ ...data, id: genId('agent'), createdAt: Date.now(), updatedAt: Date.now() });
-  list.push(agent);
-  reg[owner] = list;
-  writeRegistry(AGENTS_FILE, reg);
-  return agent;
+export async function createAgent(req, data) {
+  return withLock(AGENTS_FILE, () => {
+    const owner = ownerKey(req);
+    const reg = readRegistry(AGENTS_FILE);
+    const list = reg[owner] || [];
+    const agent = normalizeAgent({ ...data, id: genId('agent'), createdAt: Date.now(), updatedAt: Date.now() });
+    list.push(agent);
+    reg[owner] = list;
+    writeRegistry(AGENTS_FILE, reg);
+    return agent;
+  });
 }
 
-export function updateAgent(req, id, changes) {
-  const owner = ownerKey(req);
-  const reg = readRegistry(AGENTS_FILE);
-  const list = reg[owner] || [];
-  const idx = list.findIndex((a) => a.id === id);
-  if (idx < 0) return null;
-  const updated = normalizeAgent({ ...list[idx], ...changes, id, updatedAt: Date.now() });
-  list[idx] = updated;
-  reg[owner] = list;
-  writeRegistry(AGENTS_FILE, reg);
-  return updated;
+export async function updateAgent(req, id, changes) {
+  return withLock(AGENTS_FILE, () => {
+    const owner = ownerKey(req);
+    const reg = readRegistry(AGENTS_FILE);
+    const list = reg[owner] || [];
+    const idx = list.findIndex((a) => a.id === id);
+    if (idx < 0) return null;
+    const updated = normalizeAgent({ ...list[idx], ...changes, id, updatedAt: Date.now() });
+    list[idx] = updated;
+    reg[owner] = list;
+    writeRegistry(AGENTS_FILE, reg);
+    return updated;
+  });
 }
 
-export function deleteAgent(req, id) {
-  const owner = ownerKey(req);
-  const reg = readRegistry(AGENTS_FILE);
-  const list = reg[owner] || [];
-  const next = list.filter((a) => a.id !== id);
-  if (next.length === list.length) return false;
-  reg[owner] = next;
-  writeRegistry(AGENTS_FILE, reg);
-  // 级联：从该 owner 的所有工作流步骤中移除对该 agent 的引用（置空标记由前端处理）。
-  return true;
+export async function deleteAgent(req, id) {
+  return withLock(AGENTS_FILE, () => {
+    const owner = ownerKey(req);
+    const reg = readRegistry(AGENTS_FILE);
+    const list = reg[owner] || [];
+    const next = list.filter((a) => a.id !== id);
+    if (next.length === list.length) return false;
+    reg[owner] = next;
+    writeRegistry(AGENTS_FILE, reg);
+    // 级联：从该 owner 的所有工作流步骤中移除对该 agent 的引用（置空标记由前端处理）。
+    return true;
+  });
 }
 
 // ---------- Workflow ----------
 
+function normalizeFileScope(v) {
+  if (!Array.isArray(v)) return [];
+  return v.map((s) => String(s).trim()).filter(Boolean).slice(0, 20);
+}
+
+function normalizeOnFailure(v) {
+  const s = String(v || 'continue');
+  if (s === 'skip-dependents' || s === 'abort') return s;
+  return 'continue';
+}
+
 function normalizeStep(s) {
   if (!s || typeof s !== 'object') return null;
+  // dependsOn：显式声明的前驱节点 id；为空时编译器默认依赖前一步（顺序链）
+  const dependsOn = Array.isArray(s.dependsOn)
+    ? s.dependsOn.map((d) => String(d)).filter(Boolean).slice(0, 20)
+    : [];
   return {
     id: String(s.id || genId('step')),
     agentId: String(s.agentId || ''),
     taskTemplate: String(s.taskTemplate || '').slice(0, 8000),
+    dependsOn,
+    // 条件表达式（留空=总是执行）；见根目录 orchestrator/conditions.js 支持的语法
+    condition: String(s.condition || '').slice(0, 500),
+    retry: normalizeRetry(s.retry),
+    timeoutMs: Number(s.timeoutMs) || 0,
+    fileScope: normalizeFileScope(s.fileScope),
+    readOnly: s.readOnly === true,
+    onFailure: normalizeOnFailure(s.onFailure),
+  };
+}
+
+function normalizeRetry(r) {
+  if (!r || typeof r !== 'object') return { maxAttempts: 1, backoffMs: 0 };
+  return {
+    maxAttempts: Math.max(1, Math.min(5, Number(r.maxAttempts) || 1)),
+    backoffMs: Math.max(0, Math.min(30000, Number(r.backoffMs) || 0)),
   };
 }
 
@@ -161,37 +212,43 @@ export function getWorkflowById(req, id) {
   return listWorkflows(req).find((w) => w.id === id) || null;
 }
 
-export function createWorkflow(req, data) {
-  const owner = ownerKey(req);
-  const reg = readRegistry(WORKFLOWS_FILE);
-  const list = reg[owner] || [];
-  const wf = normalizeWorkflow({ ...data, id: genId('wf'), createdAt: Date.now(), updatedAt: Date.now() });
-  list.push(wf);
-  reg[owner] = list;
-  writeRegistry(WORKFLOWS_FILE, reg);
-  return wf;
+export async function createWorkflow(req, data) {
+  return withLock(WORKFLOWS_FILE, () => {
+    const owner = ownerKey(req);
+    const reg = readRegistry(WORKFLOWS_FILE);
+    const list = reg[owner] || [];
+    const wf = normalizeWorkflow({ ...data, id: genId('wf'), createdAt: Date.now(), updatedAt: Date.now() });
+    list.push(wf);
+    reg[owner] = list;
+    writeRegistry(WORKFLOWS_FILE, reg);
+    return wf;
+  });
 }
 
-export function updateWorkflow(req, id, changes) {
-  const owner = ownerKey(req);
-  const reg = readRegistry(WORKFLOWS_FILE);
-  const list = reg[owner] || [];
-  const idx = list.findIndex((w) => w.id === id);
-  if (idx < 0) return null;
-  const updated = normalizeWorkflow({ ...list[idx], ...changes, id, updatedAt: Date.now() });
-  list[idx] = updated;
-  reg[owner] = list;
-  writeRegistry(WORKFLOWS_FILE, reg);
-  return updated;
+export async function updateWorkflow(req, id, changes) {
+  return withLock(WORKFLOWS_FILE, () => {
+    const owner = ownerKey(req);
+    const reg = readRegistry(WORKFLOWS_FILE);
+    const list = reg[owner] || [];
+    const idx = list.findIndex((w) => w.id === id);
+    if (idx < 0) return null;
+    const updated = normalizeWorkflow({ ...list[idx], ...changes, id, updatedAt: Date.now() });
+    list[idx] = updated;
+    reg[owner] = list;
+    writeRegistry(WORKFLOWS_FILE, reg);
+    return updated;
+  });
 }
 
-export function deleteWorkflow(req, id) {
-  const owner = ownerKey(req);
-  const reg = readRegistry(WORKFLOWS_FILE);
-  const list = reg[owner] || [];
-  const next = list.filter((w) => w.id !== id);
-  if (next.length === list.length) return false;
-  reg[owner] = next;
-  writeRegistry(WORKFLOWS_FILE, reg);
-  return true;
+export async function deleteWorkflow(req, id) {
+  return withLock(WORKFLOWS_FILE, () => {
+    const owner = ownerKey(req);
+    const reg = readRegistry(WORKFLOWS_FILE);
+    const list = reg[owner] || [];
+    const next = list.filter((w) => w.id !== id);
+    if (next.length === list.length) return false;
+    reg[owner] = next;
+    writeRegistry(WORKFLOWS_FILE, reg);
+    return true;
+  });
 }

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useApp } from '../store/AppProvider';
-import { newAgentTemplate, EMOJI_CHOICES, COLOR_CHOICES } from '../lib/agents';
+import { newAgentTemplate } from '../lib/agents';
 import type { AgentRole } from '../lib/types';
 
 export default function AgentManager() {
@@ -56,9 +56,6 @@ export default function AgentManager() {
                 className={`agent-row ${a.id === selectedId ? 'active' : ''} ${a.enabled ? '' : 'off'}`}
                 onClick={() => setSelectedId(a.id)}
               >
-                <span className="agent-emoji" style={{ background: a.color + '22', color: a.color }}>
-                  {a.emoji}
-                </span>
                 <div className="agent-row-text">
                   <span className="agent-row-name">
                     {a.name}
@@ -93,35 +90,6 @@ export default function AgentManager() {
                 <div className="field grow">
                   <label>职责（一句话）</label>
                   <input value={selected.goal} onChange={(e) => patch(selected.id, { goal: e.target.value })} />
-                </div>
-              </div>
-
-              <div className="field">
-                <label>图标</label>
-                <div className="emoji-picker">
-                  {EMOJI_CHOICES.map((e) => (
-                    <button
-                      key={e}
-                      className={selected.emoji === e ? 'sel' : ''}
-                      onClick={() => patch(selected.id, { emoji: e })}
-                    >
-                      {e}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="field">
-                <label>主题色</label>
-                <div className="color-picker">
-                  {COLOR_CHOICES.map((col) => (
-                    <button
-                      key={col}
-                      className={selected.color === col ? 'sel' : ''}
-                      style={{ background: col }}
-                      onClick={() => patch(selected.id, { color: col })}
-                    />
-                  ))}
                 </div>
               </div>
 

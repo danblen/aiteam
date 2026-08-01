@@ -8,9 +8,17 @@
     "dev": "node dev.js",
     "dev:server": "node server/index.js",
     "dev:web": "vite",
+    "cli:list": "node cli/bin/entry.js list",
+    "cli:pack": "npm pack -w @danblen/cli",
+    "cli:publish": "npm publish -w @danblen/cli --access public --registry https://registry.npmjs.org",
     "build": "tsc -b && vite build",
+    "test": "node --test cli/**/*.test.js orchestrator/**/*.test.js",
     "preview": "vite preview"
   },
+  "workspaces": [
+    "cli",
+    "orchestrator"
+  ],
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",

@@ -78,6 +78,17 @@ function apiHeaders(extra?: Record<string, string>): Record<string, string> {
 /** 暴露给 env runner 使用：按当前（可能重定向到远端）前缀拼出 /api 路径。 */
 export { apiUrl, apiHeaders };
 
+/** codeview 按需读盘（/api/read-tree、/api/read-file），自动带鉴权头。 */
+export async function workspaceFetch(apiPath: string, init?: RequestInit): Promise<Response> {
+  const extra = init?.headers && !(init.headers instanceof Headers)
+    ? (init.headers as Record<string, string>)
+    : undefined;
+  return fetch(apiUrl(apiPath), {
+    ...init,
+    headers: apiHeaders(extra),
+  });
+}
+
 // ---------- Auth ----------
 
 export interface AuthResult {

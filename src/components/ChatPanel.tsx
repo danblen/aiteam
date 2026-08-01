@@ -84,7 +84,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
     return (
       <div className="msg system">
         <div className="system-pill">
-          <span className="orch-icon">🧠</span> Orchestrator · {message.content}
+          Orchestrator · {message.content}
         </div>
       </div>
     );
@@ -96,12 +96,12 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   const text = message.hasCode ? stripCode(message.content) : message.content;
   return (
     <div className="msg assistant">
-      <div className="avatar ai" style={{ background: (message.color || '#5B9EFF') + '22', color: message.color }}>
-        {message.emoji || '🤖'}
+      <div className="avatar ai">
+        {(message.agentName || 'AI').trim().slice(0, 1).toUpperCase()}
       </div>
       <div className="bubble">
         <div className="agent-head">
-          <span className="agent-name" style={{ color: message.color }}>{message.agentName}</span>
+          <span className="agent-name">{message.agentName}</span>
         </div>
         <PlanView plan={text} />
         {fileCount > 0 && (
@@ -123,12 +123,12 @@ function LiveBubble({ live }: { live: LiveTurn }) {
 
   return (
     <div className="msg assistant">
-      <div className="avatar ai" style={{ background: agent.color + '22', color: agent.color }}>
-        {agent.emoji}
+      <div className="avatar ai">
+        {(agent.name || 'AI').trim().slice(0, 1).toUpperCase()}
       </div>
       <div className="bubble">
         <div className="agent-head">
-          <span className="agent-name" style={{ color: agent.color }}>{agent.name}</span>
+          <span className="agent-name">{agent.name}</span>
           <span className="typing-badge">
             {badge}
             <span className="dots"><i /><i /><i /></span>
