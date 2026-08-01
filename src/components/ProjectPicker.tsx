@@ -3,12 +3,7 @@ import { useApp } from '../store/AppProvider';
 import DirBrowserModal from './DirBrowserModal';
 import { listProjects, createProject, deleteProject } from '../lib/api';
 import type { RemoteProject } from '../lib/api';
-
-// 「在服务器上选择工作目录」入口的授权邮箱。该功能可直接改动服务器上的
-// 代码，存在被外部操纵服务器的风险，故临时仅限该管理员账号使用；其余账号
-// 一律不渲染此入口（直接不进入 DOM，而非仅视觉隐藏）。
-// 注意：这只是前端限制，真正的安全边界仍应由后端对相关接口做鉴权。
-const DIR_SELECT_ALLOWED_EMAIL = 'siplgo@siplgo.xyz';
+import { isAdminEmail } from '../lib/auth';
 
 /**
  * 概览区的项目 / 工作目录选择入口。
@@ -199,9 +194,8 @@ function RemotePicker() {
   const [dirName, setDirName] = useState('');
 
   const loggedIn = Boolean(app.authEmail);
-  // 仅授权管理员账号可使用「选择服务器目录」入口（大小写不敏感）。
-  const canSelectDir =
-    (app.authEmail || '').trim().toLowerCase() === DIR_SELECT_ALLOWED_EMAIL;
+  // 仅超管可见：浏览服务器任意目录（后端 /api/env/local/dirs 同样鉴权）。
+  const canSelectDir = isAdminEmail(app.authEmail);
 
   const refresh = useCallback(() => {
     if (!loggedIn) return;
