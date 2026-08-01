@@ -10,7 +10,7 @@ import { mountDevPreview } from './preview-dev.js';
 import { mountPublish } from './publish.js';
 import { mountEnv } from './env.js';
 import { mountProjects } from './projects.js';
-import { mountMultiAgent } from './multi-agent.js';
+import { mountMultiAgent } from './multi-agent/index.js';
 import { mountWorkspaceFiles } from './workspace-files.js';
 import { mountAuth, authRequired, authFromRequest, checkConversationLimit, incrementConversationCount, getConversationCount, MAX_CONVERSATIONS_PER_USER, isAdmin } from './auth.js';
 

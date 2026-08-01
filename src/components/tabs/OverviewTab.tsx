@@ -1,6 +1,11 @@
 import { useMemo } from 'react';
 import { useApp } from '../../store/AppProvider';
 import ProjectPicker from '../ProjectPicker';
+import {
+  deriveProductOverview,
+  detectTechStack,
+  primaryFrameworkBadge,
+} from '../../lib/project-overview';
 
 function fmtDate(t: number): string {
   const d = new Date(t);
@@ -12,41 +17,40 @@ export default function OverviewTab() {
   const app = useApp();
   const s = app.current;
 
-  const features = useMemo(() => {
-    if (!s.summary) return [];
-    return s.summary
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => /^[-*•]/.test(l))
-      .map((l) => l.replace(/^[-*•]\s?/, ''))
-      .slice(0, 8);
-  }, [s.summary]);
+  const product = useMemo(() => deriveProductOverview(s), [s]);
+  const techStack = useMemo(() => detectTechStack(s.files, s.framework), [s.files, s.framework]);
+  const frameworkBadge = useMemo(
+    () => primaryFrameworkBadge(s.files, s.framework),
+    [s.files, s.framework],
+  );
 
   const history = useMemo(
     () => s.messages.filter((m) => m.kind === 'user').map((m) => m.content),
     [s.messages],
   );
 
-  const componentCount = s.files.filter((f) => /\.(jsx|tsx)$/.test(f.path)).length;
-  const hasProject = s.files.length > 0;
+  const componentCount = s.files.filter((f) => /\.(jsx|tsx|vue|svelte)$/i.test(f.path)).length;
+  const hasActivity = s.files.length > 0 || s.messages.length > 0;
 
-  if (!hasProject && s.messages.length === 0) {
+  if (!hasActivity) {
     return (
       <div className="tab-pane">
         <div className="pane-toolbar">
           <span className="pane-title">项目概览</span>
         </div>
         <div className="pane-body overview-body">
-        <ProjectPicker />
-        <div className="ov-empty-hint">
-          <div className="pane-empty-glyph">📋</div>
-          <p>项目概览</p>
-          <span>在左侧描述你的需求，这里会汇总项目的产品说明、技术栈、历史工作与记忆。</span>
+          <ProjectPicker />
+          <div className="ov-empty-hint">
+            <div className="pane-empty-glyph">📋</div>
+            <p>项目概览</p>
+            <span>在左侧描述你的需求，这里会根据对话与生成文件汇总产品说明与技术栈。</span>
+          </div>
         </div>
-      </div>
       </div>
     );
   }
+
+  const descriptionBlocks = product.description.split('\n\n').filter(Boolean);
 
   return (
     <div className="tab-pane">
@@ -58,41 +62,57 @@ export default function OverviewTab() {
         <div className="ov-hero">
           <h2>{s.title}</h2>
           <div className="ov-badges">
-            <span className="ov-badge">{s.framework === 'react' ? '⚛️ React + Vite' : '🌐 HTML'}</span>
-            <span className="ov-badge">{s.files.length} 个文件</span>
+            {s.files.length > 0 && (
+              <span className="ov-badge">{frameworkBadge}</span>
+            )}
+            {s.files.length > 0 && (
+              <span className="ov-badge">{s.files.length} 个文件</span>
+            )}
             {componentCount > 0 && <span className="ov-badge">{componentCount} 个组件</span>}
             <span className={`ov-badge ${s.previewUrl ? 'ok' : ''}`}>
-              {s.previewUrl ? '● 已构建' : '未构建'}
+              {s.previewUrl ? '● 已构建' : s.files.length > 0 ? '未构建' : '尚无代码'}
             </span>
           </div>
         </div>
 
         <div className="ov-grid">
-          {s.messages.length === 0 && <ProjectPicker />}
+          {s.messages.length === 0 && s.files.length === 0 && <ProjectPicker />}
           <section className="ov-card">
             <h3>产品描述</h3>
-            {s.summary ? (
-              <p className="ov-summary">{stripBullets(s.summary)}</p>
+            {product.description ? (
+              <div className="ov-summary">
+                {descriptionBlocks.map((block, i) => (
+                  <p key={i}>{block}</p>
+                ))}
+              </div>
             ) : (
-              <p className="ov-muted">尚无产品说明，发送一次需求后由智能体协作生成。</p>
+              <p className="ov-muted">还没有对话或产出，发送需求后会根据你的描述自动汇总。</p>
             )}
-            {features.length > 0 && (
+            {product.features.length > 0 && (
               <ul className="ov-features">
-                {features.map((f, i) => (
+                {product.features.map((f, i) => (
                   <li key={i}>{f}</li>
                 ))}
               </ul>
+            )}
+            {product.source === 'conversation' && history.length > 0 && product.features.length === 0 && (
+              <p className="ov-muted ov-source-hint">基于 {history.length} 轮用户需求</p>
             )}
           </section>
 
           <section className="ov-card">
             <h3>技术栈</h3>
-            <ul className="ov-stack">
-              <li>⚛️ React 18</li>
-              <li>⚡ Vite 构建</li>
-              <li>🎨 组件化 CSS</li>
-              <li>🧠 多智能体协作生成</li>
-            </ul>
+            {techStack.length > 0 ? (
+              <ul className="ov-stack">
+                {techStack.map((item) => (
+                  <li key={item.label}>{item.icon} {item.label}</li>
+                ))}
+              </ul>
+            ) : s.messages.length > 0 ? (
+              <p className="ov-muted">代码尚未生成；发送任务后将根据项目文件自动识别技术栈。</p>
+            ) : (
+              <p className="ov-muted">暂无项目文件。</p>
+            )}
           </section>
 
           <section className="ov-card">
@@ -137,12 +157,4 @@ export default function OverviewTab() {
       </div>
     </div>
   );
-}
-
-function stripBullets(text: string): string {
-  const nonBullet = text
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l && !/^[-*•]/.test(l));
-  return nonBullet.join(' ') || text.trim();
 }

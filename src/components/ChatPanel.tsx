@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useRef } from 'react';
 import type { ChatMessage, LiveTurn } from '../lib/types';
-import type { RunMode } from '../lib/orchestrator';
-import { parseEngineerOutput } from '../lib/orchestrator';
+import type { RunMode } from '../lib/engineer-output';
+import { parseEngineerOutput } from '../lib/engineer-output';
 import { EXAMPLES } from '../data/examples';
 import PromptInput from './PromptInput';
 import EnvironmentPicker from './EnvironmentPicker';

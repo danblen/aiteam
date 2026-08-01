@@ -7,7 +7,7 @@ import {
   newCustomAgentTemplate,
   presetTeamTemplates,
   cliLabel,
-} from '../../lib/custom-agents';
+} from '../../lib/multi-agent';
 
 /**
  * 自定义智能体管理 Tab。

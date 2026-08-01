@@ -7,13 +7,11 @@ import { fileURLToPath } from 'node:url';
  * 采用与 projects.js 一致的「JSON 文件 + per-user owner」模式：
  *   server/.data/agents.json     { [owner]: CustomAgent[] }
  *   server/.data/workflows.json  { [owner]: Workflow[] }
- *
- * owner = sanitizeName(req.user?.email) || '_anon'，与项目注册表同源，
  * 保证未登录（本地开发 / 开放访问）时多用户也不互相覆盖。
  */
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = path.join(__dirname, '.data');
+const DATA_DIR = path.join(__dirname, '..', '.data');
 const AGENTS_FILE = path.join(DATA_DIR, 'agents.json');
 const WORKFLOWS_FILE = path.join(DATA_DIR, 'workflows.json');
 

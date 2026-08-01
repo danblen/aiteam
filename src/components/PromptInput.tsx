@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { RunMode } from '../lib/orchestrator';
+import type { RunMode } from '../lib/engineer-output';
 import type { QueueItem } from '../store/AppProvider';
 
 interface Props {

@@ -1,6 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../../store/AppProvider';
-import { type Workflow, type WorkflowStep, type CustomAgent, newWorkflowTemplate, newStepTemplate, cliLabel } from '../../lib/custom-agents';
+import WorkflowGraph from '../multi-agent/WorkflowGraph';
+import {
+  type Workflow, type WorkflowStep, type CustomAgent,
+  newWorkflowTemplate, newStepTemplate, cliLabel, presetWorkflowTemplates,
+} from '../../lib/multi-agent';
+import { validateWorkflowSteps, parallelWithPrevious, toggleStepDependency } from '../../lib/multi-agent/workflow-graph';
 
 /** 取智能体角色提示词的前若干字，用作下拉框里区分同名智能体的副标识。 */
 function roleSnippet(a: CustomAgent): string {
@@ -60,6 +65,19 @@ export default function WorkflowsTab() {
   const [saving, setSaving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [runText, setRunText] = useState('');
+  const [focusStepId, setFocusStepId] = useState<string | null>(null);
+  const [importingPreset, setImportingPreset] = useState(false);
+  const stepRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  const runOverlay = useMemo(() => {
+    const ma = app.maRun;
+    if (!ma || ma.workflowId !== selectedId) return null;
+    return {
+      running: app.running,
+      nodeStatus: ma.nodeStatus,
+      activeNodeId: ma.activeNodeId,
+    };
+  }, [app.maRun, app.running, selectedId]);
 
   useEffect(() => {
     if (!selectedId && workflows.length > 0) setSelectedId(workflows[0].id);
@@ -70,6 +88,16 @@ export default function WorkflowsTab() {
     if (!base) return null;
     return { ...base, ...(drafts[base.id] || {}) };
   }, [workflows, selectedId, drafts]);
+
+  const graphValidation = useMemo(
+    () => (selected?.steps?.length ? validateWorkflowSteps(selected.steps) : null),
+    [selected?.steps],
+  );
+
+  useEffect(() => {
+    if (!focusStepId) return;
+    stepRefs.current[focusStepId]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [focusStepId, selected?.steps?.length]);
 
   const patch = (id: string, changes: Partial<Workflow>) => {
     setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...changes } }));
@@ -121,6 +149,32 @@ export default function WorkflowsTab() {
     } catch (err) {
       setError((err as Error).message || '新建工作流失败');
     }
+  };
+
+  const handleImportPreset = async (index: number) => {
+    const tpl = presetWorkflowTemplates()[index];
+    if (!tpl) return;
+    setImportingPreset(true);
+    setError(null);
+    try {
+      const created = await app.saveWorkflow({ ...newWorkflowTemplate(), ...tpl, name: tpl.name });
+      setSelectedId(created.id);
+      setDrafts({});
+    } catch (err) {
+      setError((err as Error).message || '导入示例失败');
+    } finally {
+      setImportingPreset(false);
+    }
+  };
+
+  const linkSteps = (fromId: string, toId: string) => {
+    if (!selected) return;
+    patchSteps(selected.id, toggleStepDependency(selected.steps || [], fromId, toId));
+  };
+
+  const makeParallel = (stepIndex: number) => {
+    if (!selected || stepIndex <= 0) return;
+    patchSteps(selected.id, parallelWithPrevious(selected.steps || [], stepIndex));
   };
 
   const handleSave = async (id: string) => {
@@ -176,6 +230,10 @@ export default function WorkflowsTab() {
       setError('有步骤未选择智能体，请先配置');
       return;
     }
+    if (graphValidation && !graphValidation.ok) {
+      setError(`工作流图无效：${graphValidation.errors[0]}`);
+      return;
+    }
     setError(null);
     app.runWorkflow(selected.id, text);
     setRunText('');
@@ -185,8 +243,21 @@ export default function WorkflowsTab() {
     <div className="tab-pane">
       <div className="pane-toolbar">
         <span className="pane-title">🧩 工作流编排</span>
-        <span className="pane-sub">按顺序串联多个智能体，可复用</span>
+        <span className="pane-sub">DAG：并行分支 · 多前驱汇聚 · 条件跳过</span>
         <div className="pane-actions">
+          <div className="wf-preset-menu">
+            <button className="btn ghost" disabled={importingPreset}>
+              {importingPreset ? '导入中…' : '导入示例 DAG'}
+            </button>
+            <div className="wf-preset-drop">
+              {presetWorkflowTemplates().map((t, i) => (
+                <button key={t.name} type="button" onClick={() => handleImportPreset(i)}>
+                  <strong>{t.name}</strong>
+                  <span>{t.description}</span>
+                </button>
+              ))}
+            </div>
+          </div>
           <button className="btn ghost" onClick={handleAdd}>＋ 新建</button>
         </div>
       </div>
@@ -224,7 +295,17 @@ export default function WorkflowsTab() {
           </div>
 
           {selected && (
-            <div className="agent-editor ca-editor">
+            <div className="agent-editor ca-editor wf-editor">
+              <WorkflowGraph
+                steps={selected.steps || []}
+                agents={agents}
+                run={runOverlay}
+                selectedStepId={focusStepId}
+                validation={graphValidation}
+                onSelectStep={(id) => setFocusStepId(id)}
+                onLinkSteps={linkSteps}
+              />
+
               <div className="field-row">
                 <div className="field">
                   <label>名称</label>
@@ -246,7 +327,7 @@ export default function WorkflowsTab() {
               <div className="wf-steps">
                 <div className="wf-steps-head">
                   <span>步骤序列</span>
-                  <span className="wf-steps-sub">默认顺序执行；展开「高级编排」可配置依赖与并行</span>
+                  <span className="wf-steps-sub">默认顺序链；展开高级编排或 Shift+点击预览图连线</span>
                 </div>
 
                 {(selected.steps || []).length === 0 && (
@@ -255,9 +336,19 @@ export default function WorkflowsTab() {
 
                 {(selected.steps || []).map((s, i) => {
                   const agent = agents.find((a) => a.id === s.agentId);
+                  const isRunningStep = runOverlay?.activeNodeId === s.id;
+                  const stepStatus = runOverlay?.nodeStatus[s.id];
                   return (
-                    <div className="wf-step" key={s.id}>
-                      <div className="wf-step-idx">{i + 1}</div>
+                    <div
+                      className={`wf-step${focusStepId === s.id ? ' focused' : ''}${isRunningStep ? ' running' : ''}${stepStatus ? ` st-${stepStatus}` : ''}`}
+                      key={s.id}
+                      ref={(el) => { stepRefs.current[s.id] = el; }}
+                      data-step-id={s.id}
+                    >
+                      <div className="wf-step-idx">
+                        {i + 1}
+                        {stepStatus === 'running' && <span className="wf-step-pulse" />}
+                      </div>
                       <div className="wf-step-body">
                         <div className="field-row">
                           <div className="field">
@@ -429,6 +520,15 @@ export default function WorkflowsTab() {
                         </details>
                       </div>
                       <div className="wf-step-ctl">
+                        {i > 0 && (
+                          <button
+                            className="mini"
+                            title="与上一步并行（共享相同前驱）"
+                            onClick={() => makeParallel(i)}
+                          >
+                            ∥
+                          </button>
+                        )}
                         <button className="mini" title="上移" onClick={() => moveStep(selected.id, s.id, -1)} disabled={i === 0}>↑</button>
                         <button className="mini" title="下移" onClick={() => moveStep(selected.id, s.id, 1)} disabled={i === (selected.steps || []).length - 1}>↓</button>
                         <button className="mini danger" title="删除步骤" onClick={() => removeStep(selected.id, s.id)}>✕</button>
@@ -453,9 +553,9 @@ export default function WorkflowsTab() {
                     className="btn primary"
                     onClick={handleRun}
                     disabled={app.running}
-                    title={app.running ? '有任务正在运行' : '按步骤顺序运行'}
+                    title={app.running ? '有任务正在运行' : '按 DAG 编排运行'}
                   >
-                    运行
+                    {app.running && runOverlay ? '运行中…' : '运行'}
                   </button>
                 </div>
               </div>

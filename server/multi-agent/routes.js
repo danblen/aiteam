@@ -1,11 +1,11 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import express from 'express';
-import { scanWorkspace } from './cli.js';
-import { startDevServer } from './preview-dev.js';
-import { checkConversationLimit } from './auth.js';
-import { ensureIsolatedUser, secureWorkspace } from './user-isolate.js';
-import { resolveProjectDir, ensureWorkPathAccess } from './env.js';
+import { scanWorkspace } from '../cli.js';
+import { startDevServer } from '../preview-dev.js';
+import { checkConversationLimit } from '../auth.js';
+import { ensureIsolatedUser, secureWorkspace } from '../user-isolate.js';
+import { resolveProjectDir, ensureWorkPathAccess } from '../env.js';
 import {
   listAgents,
   getAgentById,
@@ -18,16 +18,16 @@ import {
   updateWorkflow,
   deleteWorkflow,
   SUPPORTED_CLIS,
-} from './agents-store.js';
+} from './store.js';
 import {
   compileGraph,
   executeGraph,
   executeSupervisor,
   validateGraph,
   DEFAULT_STEP_TIMEOUT_MS,
-} from '../orchestrator/index.js';
-import { executeAgent } from './agents/runner.js';
-import { listAdapters, availableClis } from '../cli/index.js';
+} from '../../orchestrator/index.js';
+import { executeAgent } from './runner.js';
+import { listAdapters, availableClis } from '../../cli/index.js';
 import {
   createRun,
   appendRunEvent,

@@ -181,3 +181,83 @@ export function newStepTemplate(): WorkflowStep {
     onFailure: 'continue',
   };
 }
+
+/** 复杂编排示例（fork-join、条件分支等），导入后绑定智能体即可。 */
+export function presetWorkflowTemplates(): Omit<Workflow, 'id' | 'createdAt' | 'updatedAt'>[] {
+  const forkJoin = () => {
+    const s1 = newStepTemplate();
+    s1.taskTemplate = '{{input}}';
+    const s2 = newStepTemplate();
+    s2.dependsOn = [s1.id];
+    s2.readOnly = true;
+    s2.taskTemplate = '基于需求输出 UI/交互方案（只读分析）';
+    const s3 = newStepTemplate();
+    s3.dependsOn = [s1.id];
+    s3.readOnly = true;
+    s3.taskTemplate = '基于需求输出技术架构与接口设计（只读分析）';
+    const s4 = newStepTemplate();
+    s4.dependsOn = [s2.id, s3.id];
+    s4.taskTemplate = '综合 {{nodes.' + s2.id + '.contract.summary}} 与 {{nodes.' + s3.id + '.contract.summary}} 实现代码';
+    return [s1, s2, s3, s4];
+  };
+
+  const reviewGate = () => {
+    const s1 = newStepTemplate();
+    s1.taskTemplate = '{{input}}';
+    const s2 = newStepTemplate();
+    s2.dependsOn = [s1.id];
+    s2.taskTemplate = '实现功能并自测';
+    const s3 = newStepTemplate();
+    s3.dependsOn = [s2.id];
+    s3.readOnly = true;
+    s3.taskTemplate = '代码评审，列出问题清单';
+    const s4 = newStepTemplate();
+    s4.dependsOn = [s3.id];
+    s4.condition = `nodes.${s3.id}.contract.summary contains "通过"`;
+    s4.taskTemplate = '评审已通过，输出发布说明';
+    const s5 = newStepTemplate();
+    s5.dependsOn = [s3.id];
+    s5.condition = `nodes.${s3.id}.contract.summary contains "问题"`;
+    s5.onFailure = 'continue';
+    s5.taskTemplate = '按评审意见修复';
+    const s6 = newStepTemplate();
+    s6.dependsOn = [s5.id];
+    s6.taskTemplate = '修复后再次自测';
+    return [s1, s2, s3, s4, s5, s6];
+  };
+
+  const parallelDomains = () => {
+    const s1 = newStepTemplate();
+    s1.taskTemplate = '{{input}}';
+    const s2 = newStepTemplate();
+    s2.dependsOn = [s1.id];
+    s2.fileScope = ['src/components'];
+    s2.taskTemplate = '实现前端组件';
+    const s3 = newStepTemplate();
+    s3.dependsOn = [s1.id];
+    s3.fileScope = ['src/api', 'server'];
+    s3.taskTemplate = '实现 API 与后端逻辑';
+    const s4 = newStepTemplate();
+    s4.dependsOn = [s2.id, s3.id];
+    s4.taskTemplate = '联调前后端，修复集成问题';
+    return [s1, s2, s3, s4];
+  };
+
+  return [
+    {
+      name: '并行评审 → 汇聚开发',
+      description: '需求分析后 UI 与架构并行（只读），再汇聚到工程师实现',
+      steps: forkJoin(),
+    },
+    {
+      name: '评审门禁 + 条件分支',
+      description: '开发 → 评审 → 通过/不通过走不同分支（用 condition 控制）',
+      steps: reviewGate(),
+    },
+    {
+      name: '分域并行开发',
+      description: '前后端按 fileScope 并行写不同目录，最后集成',
+      steps: parallelDomains(),
+    },
+  ];
+}

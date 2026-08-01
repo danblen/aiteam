@@ -34,11 +34,12 @@ import {
 import type { LocalProject } from '../lib/storage';
 import type { EnvironmentConfig } from '../lib/env/types';
 import { createEnvironment } from '../lib/env';
-import { runMultiAgent, abortMultiAgentRun } from '../lib/env/multi-agent';
-import type { CustomAgent, Workflow, MultiAgentMode } from '../lib/custom-agents';
-import { newCustomAgentTemplate } from '../lib/custom-agents';
+import { runMultiAgent, abortMultiAgentRun, type PlanStep } from '../lib/multi-agent/run';
+import type { CustomAgent, Workflow, MultiAgentMode } from '../lib/multi-agent';
+import type { WorkflowNodeStatus } from '../lib/multi-agent/workflow-graph';
+import { newCustomAgentTemplate } from '../lib/multi-agent';
 import type { RemoteProject, ConversationUsage } from '../lib/api';
-import type { RunMode } from '../lib/orchestrator';
+import type { RunMode } from '../lib/engineer-output';
 import {
   BASE_PREFIX,
   resolvePreviewUrl,
@@ -82,15 +83,25 @@ export interface QueueItem {
 }
 
 /** Per-session run state so multiple sessions can run concurrently. */
+/** 多智能体运行时的 DAG 节点状态（工作流 tab 结构图用）。 */
+export interface MaRunState {
+  workflowId: string | null;
+  mode: MultiAgentMode;
+  plan: PlanStep[];
+  nodeStatus: Record<string, WorkflowNodeStatus>;
+  activeNodeId: string | null;
+}
+
 interface RunState {
   running: boolean;
   building: boolean;
   live: LiveTurn | null;
   liveFiles: ProjectFile[];
   error: string | null;
+  maRun: MaRunState | null;
 }
 
-const IDLE: RunState = { running: false, building: false, live: null, liveFiles: [], error: null };
+const IDLE: RunState = { running: false, building: false, live: null, liveFiles: [], error: null, maRun: null };
 
 interface AppState {
   sessions: Session[];
@@ -102,6 +113,8 @@ interface AppState {
   running: boolean;
   building: boolean;
   error: string | null;
+  /** 当前会话多智能体 / 工作流运行的节点状态。 */
+  maRun: MaRunState | null;
   activeTab: WorkTab;
   isRunning: (id: string) => boolean;
   // session actions
@@ -760,7 +773,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // 本地模式下优先使用刚切出的工作树目录（forcedWorkDir）。
       const sessionWorkDir = forcedWorkDir || session?.workDir || '';
 
-      setRun(sid, { running: true, error: null, live: null, liveFiles: [] });
+      setRun(sid, { running: true, error: null, live: null, liveFiles: [], maRun: null });
       appendMessage(sid, { id: uid('u'), kind: 'user', content: goal });
       appendLog(sid, 'cmd', `新任务：${goal}`);
       if (priorMessages.length === 0) {
@@ -817,7 +830,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
           enabled: true,
         };
 
-        setRun(sid, { live: { agent: maAgent, content: '', phase: 'thinking' }, liveFiles: [] });
+        setRun(sid, {
+          live: { agent: maAgent, content: '', phase: 'thinking' },
+          liveFiles: [],
+          ...(isWorkflow && effWorkflowId ? {
+            maRun: {
+              workflowId: effWorkflowId,
+              mode: 'workflow',
+              plan: [],
+              nodeStatus: {},
+              activeNodeId: null,
+            },
+          } : {}),
+        });
         appendLog(sid, 'agent', `${summaryName} 开始协作…`);
 
         // 远端模式：把远端实例 url/token 传给 runner，让它打到远端的 /api/multi-agent/run。
@@ -862,9 +887,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 case 'supervisor_decision':
                   appendLog(sid, 'info', `[监督] ${ev.action}: ${ev.reason}`);
                   break;
-                case 'plan':
+                case 'plan': {
                   appendLog(sid, 'info', `执行计划：${ev.total} 步${ev.workflow ? ` · 工作流「${ev.workflow.name}」` : ''}`);
+                  const nodeStatus: Record<string, WorkflowNodeStatus> = {};
+                  for (const s of ev.steps) nodeStatus[s.nodeId] = 'pending';
+                  setRun(sid, {
+                    maRun: {
+                      workflowId: ev.workflow?.id ?? effWorkflowId ?? null,
+                      mode: effMaMode,
+                      plan: ev.steps,
+                      nodeStatus,
+                      activeNodeId: null,
+                    },
+                  });
                   break;
+                }
                 case 'agent_start': {
                   const prev = maMeta.get(ev.agentId);
                   const meta = {
@@ -882,7 +919,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
                     producesCode: meta.producesCode,
                     enabled: true,
                   };
-                  setRun(sid, { live: { agent, content: '', phase: 'thinking' }, liveFiles: [] });
+                  setRuns((prevRuns) => {
+                    const cur = prevRuns[sid] || IDLE;
+                    const maRun = cur.maRun && ev.nodeId
+                      ? {
+                          ...cur.maRun,
+                          activeNodeId: ev.nodeId,
+                          nodeStatus: { ...cur.maRun.nodeStatus, [ev.nodeId]: 'running' as WorkflowNodeStatus },
+                        }
+                      : cur.maRun;
+                    return {
+                      ...prevRuns,
+                      [sid]: {
+                        ...cur,
+                        maRun,
+                        live: { agent, content: '', phase: 'thinking' },
+                        liveFiles: [],
+                      },
+                    };
+                  });
                   appendLog(sid, 'agent', `[${ev.index + 1}/${ev.total}] ${agent.name} 开始工作…`);
                   break;
                 }
@@ -911,11 +966,47 @@ export function AppProvider({ children }: { children: ReactNode }) {
                     hasCode: meta?.producesCode ?? true,
                   });
                   appendLog(sid, 'ok', `✔ ${meta?.name || ev.agentName} 完成（${ev.status || 'done'} · 退出码 ${ev.exitCode}）`);
-                  setRun(sid, { live: null });
+                  const contractSummary = ev.contract?.summary?.trim();
+                  if (contractSummary && meta?.producesCode === false) {
+                    patchCurrent(sid, (sess) => ({
+                      ...sess,
+                      summary: sess.summary?.includes(contractSummary)
+                        ? sess.summary
+                        : [sess.summary, contractSummary].filter(Boolean).join('\n\n'),
+                      updatedAt: Date.now(),
+                    }));
+                  }
+                  const nodeSt: WorkflowNodeStatus = ev.status === 'error' || ev.exitCode !== 0 ? 'error' : 'done';
+                  setRuns((prevRuns) => {
+                    const cur = prevRuns[sid] || IDLE;
+                    const maRun = cur.maRun && ev.nodeId
+                      ? {
+                          ...cur.maRun,
+                          activeNodeId: cur.maRun.activeNodeId === ev.nodeId ? null : cur.maRun.activeNodeId,
+                          nodeStatus: { ...cur.maRun.nodeStatus, [ev.nodeId]: nodeSt },
+                        }
+                      : cur.maRun;
+                    return { ...prevRuns, [sid]: { ...cur, maRun, live: null } };
+                  });
                   break;
                 }
                 case 'node_skipped':
                   appendLog(sid, 'info', `⏭ ${ev.agentName} 已跳过`);
+                  setRuns((prevRuns) => {
+                    const cur = prevRuns[sid] || IDLE;
+                    if (!cur.maRun) return prevRuns;
+                    return {
+                      ...prevRuns,
+                      [sid]: {
+                        ...cur,
+                        maRun: {
+                          ...cur.maRun,
+                          activeNodeId: cur.maRun.activeNodeId === ev.nodeId ? null : cur.maRun.activeNodeId,
+                          nodeStatus: { ...cur.maRun.nodeStatus, [ev.nodeId]: 'skipped' },
+                        },
+                      },
+                    };
+                  });
                   break;
                 case 'node_files':
                   if (ev.files.length > 0) {
@@ -944,7 +1035,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 }
                 case 'error':
                   appendLog(sid, 'error', ev.text || '执行失败');
-                  setRun(sid, { error: ev.text || '执行失败' });
+                  setRuns((prevRuns) => {
+                    const cur = prevRuns[sid] || IDLE;
+                    let maRun = cur.maRun;
+                    if (maRun && ev.nodeId) {
+                      maRun = {
+                        ...maRun,
+                        activeNodeId: maRun.activeNodeId === ev.nodeId ? null : maRun.activeNodeId,
+                        nodeStatus: { ...maRun.nodeStatus, [ev.nodeId]: 'error' },
+                      };
+                    }
+                    return { ...prevRuns, [sid]: { ...cur, maRun, error: ev.text || '执行失败' } };
+                  });
                   break;
               }
             }
@@ -1376,7 +1478,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     (workflowId: string, text: string) => {
       const goal = text.trim();
       if (!goal) return;
-      setActiveTab('terminal');
+      setActiveTab('workflows');
       const sid = currentIdRef.current;
       if (!sid) return;
       const r = runs[sid] || IDLE;
@@ -1521,6 +1623,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     running: run.running,
     building: run.building,
     error: run.error,
+    maRun: run.maRun,
     activeTab,
     isRunning,
     newSession,

@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../store/AppProvider';
-import { cliLabel } from '../lib/custom-agents';
-import type { MultiAgentMode } from '../lib/custom-agents';
+import { cliLabel, type MultiAgentMode } from '../lib/multi-agent';
 
 interface Props {
   disabled?: boolean;

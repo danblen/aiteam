@@ -1,5 +1,7 @@
 import type { Framework, ProjectFile } from './types';
 
+/** 解析工程师 CLI 输出（与 @danblen/orchestrator 编排包无关）。 */
+
 export type RunMode = 'replan' | 'iterate';
 
 /**
@@ -52,11 +54,6 @@ function lastFenceIndex(raw: string): number {
   let m: RegExpExecArray | null;
   while ((m = closed.exec(raw))) last = m.index;
   return last;
-}
-
-/** True if the engineer's output contains any project code. */
-export function hasProjectCode(raw: string): boolean {
-  return parseEngineerOutput(raw).files.length > 0;
 }
 
 /** Pull the HTML out of a fenced code block (tolerant of a missing close). */

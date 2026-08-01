@@ -2530,10 +2530,20 @@ button {
   color: var(--text);
 }
 .ov-summary {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 14px;
+  line-height: 1.65;
   color: var(--text-dim);
+  white-space: pre-wrap;
+}
+.ov-summary p {
+  margin: 0 0 10px;
+}
+.ov-summary p:last-child {
+  margin-bottom: 0;
+}
+.ov-source-hint {
+  margin-top: 8px;
+  font-size: 11px;
 }
 .ov-muted {
   font-size: 12.5px;
@@ -3911,6 +3921,255 @@ button {
   color: var(--accent);
   font-weight: 700;
   font-size: 14px;
+}
+
+/* ── Workflow DAG graph preview ── */
+.wf-editor {
+  gap: 16px;
+}
+.wf-graph-wrap {
+  margin: 0;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-elev);
+  overflow: hidden;
+}
+.wf-graph-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+}
+.wf-graph-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.wf-graph-meta {
+  font-size: 11px;
+  color: var(--accent);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.wf-graph-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-left: auto;
+}
+.wf-graph-issues {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.wf-graph-issue {
+  font-size: 11px;
+  line-height: 1.4;
+}
+.wf-graph-issue.err { color: #cf222e; }
+.wf-graph-issue.warn { color: var(--text-dim); }
+.wf-graph-empty-sub {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.wf-preset-menu {
+  position: relative;
+}
+.wf-preset-menu:hover .wf-preset-drop,
+.wf-preset-menu:focus-within .wf-preset-drop {
+  display: flex;
+}
+.wf-preset-drop {
+  display: none;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 20;
+  flex-direction: column;
+  min-width: 260px;
+  margin-top: 4px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+.wf-preset-drop button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text);
+}
+.wf-preset-drop button:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.wf-preset-drop strong {
+  font-size: 12px;
+}
+.wf-preset-drop span {
+  font-size: 11px;
+  color: var(--text-faint);
+  line-height: 1.35;
+}
+.wf-graph-run-badge {
+  font-size: 11px;
+  color: var(--text-faint);
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+.wf-graph-run-badge.live {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  animation: wf-pulse-badge 1.4s ease-in-out infinite;
+}
+@keyframes wf-pulse-badge {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+.wf-graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+.wf-leg {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-faint);
+}
+.wf-leg-running { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+.wf-leg-done { color: #1a7f37; border-color: #9be9a8; }
+.wf-leg-skipped { color: var(--text-faint); border-style: dashed; }
+.wf-leg-error { color: #cf222e; border-color: #ffcecb; }
+.wf-graph-scroll {
+  overflow: auto;
+  max-height: min(320px, 40vh);
+  min-height: 140px;
+  padding: 8px;
+}
+.wf-graph-svg {
+  display: block;
+  min-width: 100%;
+  height: auto;
+}
+.wf-graph-empty {
+  padding: 32px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-dim);
+  border: 1px dashed var(--accent);
+  border-radius: 12px;
+  margin-bottom: 0;
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-elev));
+}
+.wf-edge {
+  fill: none;
+  stroke: var(--text-faint);
+  stroke-width: 1.4;
+  opacity: 0.55;
+}
+.wf-node-rect {
+  fill: var(--bg);
+  stroke: var(--border);
+  stroke-width: 1.2;
+}
+.wf-node-g:hover .wf-node-rect {
+  stroke: var(--accent);
+}
+.wf-node-g.selected .wf-node-rect {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.wf-node-g.st-running .wf-node-rect {
+  stroke: var(--accent);
+  stroke-width: 2;
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 35%, transparent));
+  animation: wf-node-run 1.2s ease-in-out infinite;
+}
+.wf-node-g.st-done .wf-node-rect {
+  stroke: #1a7f37;
+  fill: color-mix(in srgb, #e6ffec 50%, var(--bg));
+}
+.wf-node-g.st-skipped .wf-node-rect {
+  stroke: var(--text-faint);
+  stroke-dasharray: 4 3;
+  opacity: 0.75;
+}
+.wf-node-g.st-error .wf-node-rect {
+  stroke: #cf222e;
+  fill: color-mix(in srgb, #ffebe9 45%, var(--bg));
+}
+@keyframes wf-node-run {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.82; }
+}
+.wf-node-idx {
+  font-size: 11px;
+  font-weight: 700;
+  fill: var(--text-faint);
+}
+.wf-node-status {
+  font-size: 11px;
+  font-weight: 700;
+}
+.wf-node-status-running { fill: var(--accent); }
+.wf-node-status-done { fill: #1a7f37; }
+.wf-node-status-skipped { fill: var(--text-faint); }
+.wf-node-status-error { fill: #cf222e; }
+.wf-node-name {
+  font-size: 12px;
+  font-weight: 600;
+  fill: var(--text);
+}
+.wf-node-cli {
+  font-size: 10px;
+  fill: var(--text-faint);
+}
+.wf-node-badges,
+.wf-node-cond {
+  font-size: 9px;
+  fill: var(--accent);
+}
+.wf-node-cond {
+  fill: #b45309;
+}
+.wf-step.focused {
+  outline: 2px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  outline-offset: 2px;
+  border-radius: 10px;
+}
+.wf-step.running {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.wf-step.st-done { box-shadow: inset 3px 0 0 #1a7f37; }
+.wf-step.st-skipped { box-shadow: inset 3px 0 0 var(--text-faint); }
+.wf-step.st-error { box-shadow: inset 3px 0 0 #cf222e; }
+.wf-step-pulse {
+  display: block;
+  width: 6px;
+  height: 6px;
+  margin: 2px auto 0;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: wf-pulse-badge 1s ease-in-out infinite;
 }
 
 /* chat-topbar 容纳两个 picker 时给点间距 */

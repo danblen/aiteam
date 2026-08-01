@@ -1,5 +1,5 @@
 import type { ProjectFile } from '../types';
-import type { MultiAgentMode } from '../custom-agents';
+import type { MultiAgentMode } from './types';
 import { BASE_PREFIX, getAuthToken, apiUrl, apiHeaders } from '../api';
 
 /** 执行计划中一步的摘要。 */
