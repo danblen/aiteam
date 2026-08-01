@@ -14,6 +14,8 @@ export default function DirBrowserModal({ initialPath, onPick, onClose }: Props)
   const [cwd, setCwd] = useState(initialPath || '');
   const [parent, setParent] = useState<string | null>(null);
   const [dirs, setDirs] = useState<LocalDirEntry[]>([]);
+  const [scoped, setScoped] = useState(false);
+  const [scopeRoot, setScopeRoot] = useState<string | null>(null);
   const [manual, setManual] = useState(initialPath || '');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -26,6 +28,8 @@ export default function DirBrowserModal({ initialPath, onPick, onClose }: Props)
         setCwd(res.path);
         setParent(res.parent);
         setDirs(res.dirs);
+        setScoped(Boolean(res.scoped));
+        setScopeRoot(res.root ?? null);
         setManual(res.path);
       })
       .catch((err) => setError((err as Error).message || '读取目录失败'))
@@ -58,21 +62,28 @@ export default function DirBrowserModal({ initialPath, onPick, onClose }: Props)
         </div>
 
         <div className="dir-path-row">
-          <input
-            className="env-input"
-            value={manual}
-            placeholder="直接输入绝对路径，回车跳转"
-            onChange={(e) => setManual(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                load(manual.trim() || undefined);
-              }
-            }}
-          />
-          <button className="btn-ghost" onClick={() => load(manual.trim() || undefined)}>
-            跳转
-          </button>
+          {!scoped && (
+            <>
+              <input
+                className="env-input"
+                value={manual}
+                placeholder="直接输入绝对路径，回车跳转"
+                onChange={(e) => setManual(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    load(manual.trim() || undefined);
+                  }
+                }}
+              />
+              <button className="btn-ghost" onClick={() => load(manual.trim() || undefined)}>
+                跳转
+              </button>
+            </>
+          )}
+          {scoped && scopeRoot && (
+            <span className="env-hint" title={scopeRoot}>工作空间：{scopeRoot}</span>
+          )}
         </div>
 
         <div className="dir-body">

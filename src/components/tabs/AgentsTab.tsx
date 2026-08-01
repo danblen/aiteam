@@ -5,6 +5,7 @@ import {
   type AgentCliId,
   CLI_OPTIONS,
   newCustomAgentTemplate,
+  presetTeamTemplates,
   cliLabel,
 } from '../../lib/custom-agents';
 
@@ -19,6 +20,7 @@ export default function AgentsTab() {
   const [selectedId, setSelectedId] = useState<string>('');
   const [drafts, setDrafts] = useState<Record<string, Partial<CustomAgent>>>({});
   const [saving, setSaving] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // 首次进入或刷新后，自动选中第一个智能体。
@@ -86,12 +88,35 @@ export default function AgentsTab() {
     }
   };
 
+  const handleImportPreset = async () => {
+    if (importing) return;
+    setImporting(true);
+    setError(null);
+    try {
+      const cliId = (app.envConfig.local.cliId || 'claude') as AgentCliId;
+      let lastId = '';
+      for (const tpl of presetTeamTemplates(cliId)) {
+        const created = await app.saveCustomAgent(tpl);
+        lastId = created.id;
+      }
+      if (lastId) setSelectedId(lastId);
+      setDrafts({});
+    } catch (err) {
+      setError((err as Error).message || '导入示例团队失败');
+    } finally {
+      setImporting(false);
+    }
+  };
+
   return (
     <div className="tab-pane">
       <div className="pane-toolbar">
-        <span className="pane-title">🤖 自定义智能体</span>
-        <span className="pane-sub">绑定 CLI + 自定义提示词，云端运行</span>
+        <span className="pane-title">🤖 智能体</span>
+        <span className="pane-sub">绑定 CLI + 提示词，本地 / 云端均可运行</span>
         <div className="pane-actions">
+          <button className="btn ghost" onClick={handleImportPreset} disabled={importing}>
+            {importing ? '导入中…' : '导入示例团队'}
+          </button>
           <button className="btn ghost" onClick={handleAdd}>＋ 新建</button>
         </div>
       </div>
@@ -101,8 +126,8 @@ export default function AgentsTab() {
           <div className="agents-list">
             {agents.length === 0 && (
               <div className="ca-empty">
-                <p>还没有自定义智能体</p>
-                <span>新建一个，选择 CLI 并填写角色提示词，即可在云端运行</span>
+                <p>还没有智能体</p>
+                <span>新建一个，或导入 PM → 设计 → 评审 → 工程师 示例团队</span>
               </div>
             )}
             {agents.map((a) => {

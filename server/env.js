@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import { runCLI, scanWorkspace } from './cli.js';
 import { startDevServer } from './preview-dev.js';
 import { runSSHAndSync, testSSH } from './ssh.js';
-import { ensureAdminForSensitive, checkConversationLimit } from './auth.js';
+import { checkConversationLimit, isAdmin, authRequired } from './auth.js';
 import { ensureIsolatedUser, secureWorkspace, removeIsolatedUser } from './user-isolate.js';
 
 // 本机可被探测到的 CLI Agent 清单。
@@ -67,6 +67,36 @@ export function isWithin(parent, child) {
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
+/** 登录用户在 aiteamoutput 下的专属目录：WORKSPACES_DIR/<邮箱>/ */
+export function userWorkspaceRoot(email) {
+  const owner = sanitizeName(email) || '_anon';
+  return path.join(WORKSPACES_DIR, owner);
+}
+
+/**
+ * 是否允许访问目标工作路径：
+ * - 未启用鉴权（本地）→ 放行；
+ * - 超管 → 任意路径；
+ * - 普通用户 → 仅其 userWorkspaceRoot 内。
+ */
+export function canAccessWorkPath(req, targetPath) {
+  const resolved = path.resolve(targetPath);
+  if (!authRequired()) return true;
+  if (isAdmin(req)) return true;
+  const email = req.user?.email;
+  if (!email) return false;
+  const root = userWorkspaceRoot(email);
+  fs.mkdirSync(root, { recursive: true });
+  return isWithin(root, resolved);
+}
+
+/** 工作路径鉴权闸门；拒绝时写出 403 并返回 false。 */
+export function ensureWorkPathAccess(req, res, targetPath) {
+  if (canAccessWorkPath(req, targetPath)) return true;
+  res.status(403).json({ error: '无权限：只能访问您的工作空间目录' });
+  return false;
+}
+
 import { resolveExecutable } from '../cli/index.js';
 
 /**
@@ -88,7 +118,6 @@ export function mountEnv(app) {
     const agents = [];
 
     if (mode === 'local') {
-      agents.push({ id: 'builtin', name: '内置智能体团队', kind: 'builtin' });
       const found = await Promise.all(
         KNOWN_CLIS.map(async (c) => {
           let p = await resolveExecutable(c.bin);
@@ -122,7 +151,7 @@ export function mountEnv(app) {
     // 在「工作根目录/项目名」子目录中执行；若 direct 则直接以选定目录为项目根。
     const workDir = resolveProjectDir(reqWorkDir, projectName, sid, req.user?.email, direct);
     // 工作目录走出受管理的 WORKSPACES_DIR（即任意外部目录）时，云端仅管理员可在其中跑 CLI。
-    if (!isWithin(WORKSPACES_DIR, workDir) && !ensureAdminForSensitive(req, res)) return;
+    if (!ensureWorkPathAccess(req, res, workDir)) return;
     fs.mkdirSync(workDir, { recursive: true });
 
     // SSE setup
@@ -204,7 +233,7 @@ export function mountEnv(app) {
 
     const workDir = resolveProjectDir(reqWorkDir, projectName, sid, req.user?.email, direct);
     // 读取任意外部目录同属高危，云端仅管理员可读。
-    if (!isWithin(WORKSPACES_DIR, workDir) && !ensureAdminForSensitive(req, res)) return;
+    if (!ensureWorkPathAccess(req, res, workDir)) return;
     if (!fs.existsSync(workDir)) return res.json({ ok: true, files: [] });
 
     try {
@@ -218,10 +247,28 @@ export function mountEnv(app) {
   // ------ Browse local directories (for the per-session workspace picker) ------
 
   app.get('/api/env/local/dirs', (req, res) => {
-    // 浏览服务器任意目录属高危操作，云端仅管理员可用。
-    if (!ensureAdminForSensitive(req, res)) return;
+    const admin = isAdmin(req);
+    let scopeRoot = null;
+    let defaultDir;
+
+    if (admin) {
+      defaultDir = os.homedir();
+    } else {
+      if (authRequired() && !req.user?.email) {
+        return res.status(401).json({ error: '请先登录' });
+      }
+      scopeRoot = userWorkspaceRoot(req.user?.email);
+      fs.mkdirSync(scopeRoot, { recursive: true });
+      defaultDir = scopeRoot;
+    }
+
     const raw = typeof req.query.path === 'string' ? req.query.path.trim() : '';
-    const dir = raw ? path.resolve(raw) : os.homedir();
+    let dir = raw ? path.resolve(raw) : defaultDir;
+
+    if (scopeRoot && !isWithin(scopeRoot, dir)) {
+      dir = scopeRoot;
+    }
+
     let entries;
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -233,8 +280,18 @@ export function mountEnv(app) {
       .filter((e) => e.name !== 'node_modules' && e.name !== 'dist')
       .map((e) => ({ name: e.name, path: path.join(dir, e.name) }))
       .sort((a, b) => a.name.localeCompare(b.name));
-    const parent = path.dirname(dir);
-    res.json({ ok: true, path: dir, parent: parent === dir ? null : parent, dirs });
+    const parentDir = path.dirname(dir);
+    const parent = (scopeRoot && !isWithin(scopeRoot, parentDir)) || parentDir === dir
+      ? null
+      : parentDir;
+    res.json({
+      ok: true,
+      path: dir,
+      parent,
+      dirs,
+      scoped: Boolean(scopeRoot),
+      root: scopeRoot,
+    });
   });
 
   // ------ SSH: test connection ------

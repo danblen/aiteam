@@ -45,7 +45,20 @@ export function clearAuthToken() {
  * Call clearApiConfig() to revert to local backend.
  */
 export function setApiConfig(prefix: string, token: string) {
-  _apiPrefix = prefix.replace(/\/+$/, '');
+  const normalized = prefix.replace(/\/+$/, '');
+  // 云端即本站点时，用相对路径即可，避免绝对 URL 带来的时序/跨域边缘问题。
+  if (normalized && typeof window !== 'undefined') {
+    try {
+      if (new URL(normalized).origin === window.location.origin) {
+        _apiPrefix = '';
+        _apiToken = token;
+        return;
+      }
+    } catch {
+      /* 非法 URL，按原样写入 */
+    }
+  }
+  _apiPrefix = normalized;
   _apiToken = token;
 }
 
@@ -75,6 +88,24 @@ function apiHeaders(extra?: Record<string, string>): Record<string, string> {
   return h;
 }
 
+/** 将服务端返回的根相对 previewUrl 转为前端 iframe 可用的完整地址。 */
+export function resolvePreviewUrl(previewUrl: string, remoteBase?: string): string {
+  if (previewUrl.startsWith('http')) return previewUrl;
+  if (!previewUrl.startsWith('/')) return previewUrl;
+  const base = remoteBase?.replace(/\/+$/, '') || '';
+  if (base) {
+    try {
+      if (typeof window !== 'undefined' && new URL(base).origin === window.location.origin) {
+        return `${BASE_PREFIX}${previewUrl}`;
+      }
+      return `${base}${BASE_PREFIX}${previewUrl}`;
+    } catch {
+      return `${base}${BASE_PREFIX}${previewUrl}`;
+    }
+  }
+  return `${BASE_PREFIX}${previewUrl}`;
+}
+
 /** 暴露给 env runner 使用：按当前（可能重定向到远端）前缀拼出 /api 路径。 */
 export { apiUrl, apiHeaders };
 
@@ -94,6 +125,12 @@ export async function workspaceFetch(apiPath: string, init?: RequestInit): Promi
 export interface AuthResult {
   email: string;
   token: string;
+  isAdmin: boolean;
+}
+
+export interface MeResult {
+  email: string;
+  isAdmin: boolean;
 }
 
 /** 邮箱+密码登录（云端模式下自动打到远端实例）。 */
@@ -105,7 +142,7 @@ export async function login(email: string, password: string): Promise<AuthResult
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.token) throw new Error(data.error || `登录失败 (${res.status})`);
-  return { email: data.email, token: data.token };
+  return { email: data.email, token: data.token, isAdmin: Boolean(data.isAdmin) };
 }
 
 /** 注册新邮箱账号，成功后直接返回令牌。 */
@@ -117,15 +154,15 @@ export async function register(email: string, password: string): Promise<AuthRes
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.token) throw new Error(data.error || `注册失败 (${res.status})`);
-  return { email: data.email, token: data.token };
+  return { email: data.email, token: data.token, isAdmin: Boolean(data.isAdmin) };
 }
 
 /** 校验当前令牌并返回登录邮箱；未登录则抛错。 */
-export async function fetchMe(): Promise<{ email: string }> {
+export async function fetchMe(): Promise<MeResult> {
   const res = await fetch(apiUrl('/api/auth/me'), { headers: apiHeaders() });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || '未登录');
-  return { email: data.email };
+  return { email: data.email, isAdmin: Boolean(data.isAdmin) };
 }
 
 // ---------- 对话次数追踪 ----------
@@ -198,13 +235,22 @@ export interface LocalDirListing {
   path: string;
   parent: string | null;
   dirs: LocalDirEntry[];
+  /** 普通用户：仅能浏览 root 以内，不可手动跳转到外部路径。 */
+  scoped?: boolean;
+  root?: string | null;
 }
 export async function listLocalDirs(dirPath?: string): Promise<LocalDirListing> {
   const qs = dirPath ? `?path=${encodeURIComponent(dirPath)}` : '';
   const res = await fetch(apiUrl(`/api/env/local/dirs${qs}`), { headers: apiHeaders() });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `读取目录失败 (${res.status})`);
-  return { path: data.path, parent: data.parent ?? null, dirs: (data.dirs || []) as LocalDirEntry[] };
+  return {
+    path: data.path,
+    parent: data.parent ?? null,
+    dirs: (data.dirs || []) as LocalDirEntry[],
+    scoped: Boolean(data.scoped),
+    root: data.root ?? null,
+  };
 }
 
 /** 直接读取一个本地目录（作为项目根）下的文件。 */

@@ -20,13 +20,11 @@ import type {
 } from '../lib/types';
 import {
   createSession,
-  loadAgents,
   loadCurrentId,
   loadEnvConfig,
   loadLocalProjects,
   loadSessions,
   projectDirName,
-  saveAgents,
   saveCurrentId,
   saveEnvConfig,
   saveLocalProjects,
@@ -34,21 +32,20 @@ import {
   uid,
 } from '../lib/storage';
 import type { LocalProject } from '../lib/storage';
-import { DEFAULT_AGENTS } from '../lib/agents';
 import type { EnvironmentConfig } from '../lib/env/types';
 import { createEnvironment } from '../lib/env';
 import { runMultiAgent, abortMultiAgentRun } from '../lib/env/multi-agent';
 import type { CustomAgent, Workflow, MultiAgentMode } from '../lib/custom-agents';
+import { newCustomAgentTemplate } from '../lib/custom-agents';
 import type { RemoteProject, ConversationUsage } from '../lib/api';
-import { runCrew, parseEngineerOutput } from '../lib/orchestrator';
 import type { RunMode } from '../lib/orchestrator';
 import {
   BASE_PREFIX,
+  resolvePreviewUrl,
   buildPreview,
   startDevPreview,
   setApiConfig,
   clearApiConfig,
-  writeProjectFiles,
   readLocalDirFiles,
   checkoutProject,
   createProject,
@@ -73,7 +70,7 @@ import {
   deleteWorkflow,
 } from '../lib/api';
 
-export type WorkTab = 'overview' | 'preview' | 'code' | 'cloud' | 'files' | 'terminal' | 'publish' | 'team' | 'agents' | 'workflows';
+export type WorkTab = 'overview' | 'preview' | 'code' | 'cloud' | 'files' | 'terminal' | 'publish' | 'agents' | 'workflows';
 
 /** 一条排队中的待执行消息。 */
 export interface QueueItem {
@@ -98,7 +95,6 @@ const IDLE: RunState = { running: false, building: false, live: null, liveFiles:
 interface AppState {
   sessions: Session[];
   current: Session;
-  agents: AgentRole[];
   envConfig: EnvironmentConfig;
   // current session's run state (derived)
   live: LiveTurn | null;
@@ -113,9 +109,6 @@ interface AppState {
   switchSession: (id: string) => void;
   deleteSession: (id: string) => void;
   renameSession: (id: string, title: string) => void;
-  // agent actions
-  updateAgents: (agents: AgentRole[]) => void;
-  resetAgents: () => void;
   // environment
   setEnvConfig: (config: EnvironmentConfig) => void;
   /** 设置/清除本会话选定的本地工作目录（传 null 清除）。 */
@@ -141,6 +134,8 @@ interface AppState {
   mergeLocalSession: (id: string) => Promise<void>;
   // auth (公共登录/注册，与执行环境无关)
   authEmail: string | null;
+  /** 是否为超管（由服务端 /api/auth/me 判定，与 ADMIN_EMAIL 一致）。 */
+  isAdmin: boolean;
   /** 当前用户的对话剩余次数（null 表示未加载）。 */
   conversationUsage: ConversationUsage | null;
   login: (email: string, password: string) => Promise<void>;
@@ -178,7 +173,7 @@ interface AppState {
   /** 拉取当前用户的自定义智能体（云端模式下打到远端实例）。 */
   reloadCustomAgents: () => Promise<void>;
   /** 保存智能体（id 为空则新建，否则更新）。返回保存后的智能体。 */
-  saveCustomAgent: (agent: CustomAgent) => Promise<CustomAgent>;
+  saveCustomAgent: (agent: CustomAgent | Omit<CustomAgent, 'id' | 'createdAt' | 'updatedAt'>) => Promise<CustomAgent>;
   removeCustomAgent: (id: string) => Promise<void>;
   /** 拉取当前用户的工作流。 */
   reloadWorkflows: () => Promise<void>;
@@ -194,28 +189,6 @@ export function useApp(): AppState {
   return ctx;
 }
 
-/** Condense prior conversation so follow-up turns continue the same project. */
-function condenseHistory(messages: ChatMessage[]): string {
-  const recent = messages.slice(-8);
-  return recent
-    .map((m) => {
-      if (m.kind === 'user') return `用户：${clip(m.content, 400)}`;
-      if (m.kind === 'agent') return `${m.agentName || '智能体'}：${clip(stripFences(m.content), 300)}`;
-      return '';
-    })
-    .filter(Boolean)
-    .join('\n');
-}
-
-function stripFences(raw: string): string {
-  const i = raw.indexOf('```');
-  return i >= 0 ? raw.slice(0, i).trim() : raw.trim();
-}
-
-function clip(s: string, n: number): string {
-  return s.length <= n ? s : s.slice(0, n) + '…';
-}
-
 // 若本应用被嵌入 iframe（例如预览页），绝不写 localStorage，
 // 以免同源的第二份副本覆盖父窗口的会话数据。
 const IS_EMBEDDED =
@@ -228,11 +201,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return loaded.length ? loaded : [createSession()];
   });
   const [currentId, setCurrentId] = useState<string>(() => loadCurrentId() || '');
-  const [agents, setAgents] = useState<AgentRole[]>(() => loadAgents());
   const [envConfig, setEnvConfigState] = useState<EnvironmentConfig>(() => loadEnvConfig());
   const [runs, setRuns] = useState<Record<string, RunState>>({});
   const [activeTab, setActiveTab] = useState<WorkTab>('overview');
   const [authEmail, setAuthEmail] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [conversationUsage, setConversationUsage] = useState<ConversationUsage | null>(null);
   const [localProjects, setLocalProjects] = useState<LocalProject[]>(() => loadLocalProjects());
   const [customAgents, setCustomAgents] = useState<CustomAgent[]>([]);
@@ -267,9 +240,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!IS_EMBEDDED) saveSessions(sessions);
   }, [sessions]);
   useEffect(() => {
-    if (!IS_EMBEDDED) saveAgents(agents);
-  }, [agents]);
-  useEffect(() => {
     if (!IS_EMBEDDED) saveEnvConfig(envConfig);
   }, [envConfig]);
   useEffect(() => {
@@ -295,10 +265,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     fetchMe()
       .then((me) => {
-        if (!cancelled) setAuthEmail(me.email);
+        if (!cancelled) {
+          setAuthEmail(me.email);
+          setIsAdmin(me.isAdmin);
+        }
       })
       .catch(() => {
-        if (!cancelled) setAuthEmail(null);
+        if (!cancelled) {
+          setAuthEmail(null);
+          setIsAdmin(false);
+        }
       });
     return () => {
       cancelled = true;
@@ -310,17 +286,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const res = await apiLogin(email, password);
     setAuthToken(res.token);
     setAuthEmail(res.email);
+    setIsAdmin(res.isAdmin);
   }, []);
 
   const register = useCallback(async (email: string, password: string) => {
     const res = await apiRegister(email, password);
     setAuthToken(res.token);
     setAuthEmail(res.email);
+    setIsAdmin(res.isAdmin);
   }, []);
 
   const logout = useCallback(() => {
     clearAuthToken();
     setAuthEmail(null);
+    setIsAdmin(false);
   }, []);
 
   // 登录态变化时刷新对话剩余次数。
@@ -392,8 +371,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [patchCurrent],
   );
 
-  const updateAgents = useCallback((next: AgentRole[]) => setAgents(next), []);
-  const resetAgents = useCallback(() => setAgents(DEFAULT_AGENTS.map((a) => ({ ...a }))), []);
   const setEnvConfig = useCallback(
     (config: EnvironmentConfig) => {
       const sid = currentIdRef.current;
@@ -771,8 +748,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
 
       const priorMessages = session ? session.messages : [];
-      const currentFiles = session ? session.files : [];
-      const effectiveMode: RunMode = currentFiles.length > 0 ? mode : 'replan';
 
       // 本会话对应的项目目录名：首条消息时用本次目标生成（与重命名一致），
       // 否则沿用已有会话标题，保证同一会话多次迭代始终在同一个项目文件夹中。
@@ -811,6 +786,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         ?? (effAgentIds.length > 0 ? 'agents' : null);
 
       if (effMaMode && (effAgentIds.length > 0 || effWorkflowId)) {
+        if (effMaMode === 'workflow' && effWorkflowId && !workflows.some((w) => w.id === effWorkflowId)) {
+          appendLog(sid, 'error', '工作流无效或已删除，请重新选择');
+          setRun(sid, { running: false, error: '工作流无效，请重新选择' });
+          delete abortRefs.current[sid];
+          return;
+        }
         if (effMaMode === 'supervisor' && effAgentIds.length === 0) {
           appendLog(sid, 'error', 'Supervisor 模式请至少选择一个智能体');
           setRun(sid, { running: false, error: 'Supervisor 模式请至少选择一个智能体' });
@@ -951,11 +932,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
                     patchCurrent(sid, (s) => ({ ...s, files, framework, updatedAt: Date.now() }));
                     appendLog(sid, 'ok', `✔ 多智能体协作完成，生成 ${files.length} 个文件`);
                     if (previewUrl) {
-                      const fullUrl = previewUrl.startsWith('http')
-                        ? previewUrl
-                        : previewUrl.startsWith('/')
-                          ? `${BASE_PREFIX}${previewUrl}`
-                          : previewUrl;
+                      const remoteBase = cfg.mode === 'remote' ? cfg.remote.url : undefined;
+                      const fullUrl = resolvePreviewUrl(previewUrl, remoteBase);
                       patchCurrent(sid, (s) => ({ ...s, previewUrl: fullUrl }));
                       appendLog(sid, 'ok', `✔ 预览已就绪`);
                       if (sid === currentIdRef.current) setActiveTab('preview');
@@ -985,8 +963,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      // ── CLI mode: bypass runCrew, delegate to local CLI Agent ──
-      if (cfg.mode === 'local' && cfg.local.engine === 'cli') {
+      if (multiAgentMode === 'supervisor') {
+        appendLog(sid, 'error', 'Supervisor 模式请至少选择一个智能体');
+        setRun(sid, { running: false, error: 'Supervisor 模式请至少选择一个智能体' });
+        delete abortRefs.current[sid];
+        return;
+      }
+
+      // ── Local mode: delegate to 本机 CLI Agent ──
+      if (cfg.mode === 'local') {
         const cliAgent: AgentRole = {
           id: 'cli-runner',
           name: 'CLI Agent',
@@ -1380,105 +1365,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
         return;
       }
-
-      // ── Builtin mode: runCrew (existing) ──
-      (async () => {
-        // 对话次数限制：服务端计数，超管不限制。
-        try {
-          const _cu = await trackConversation();
-              setConversationUsage(_cu);
-        } catch (err) {
-          const msg = (err as Error).message || '对话次数已达上限';
-          appendLog(sid, 'error', msg);
-          setRun(sid, { running: false, error: msg });
-          return;
-        }
-
-        const ctx = { currentFiles, history: condenseHistory(priorMessages) };
-        let firstNonCodeSummary = '';
-
-        runCrew(
-          agents,
-          goal,
-          effectiveMode,
-          ctx,
-          {
-            onSystem: (msg) => {
-              appendMessage(sid, { id: uid('sys'), kind: 'system', content: msg });
-              appendLog(sid, 'info', msg);
-            },
-            onAgentStart: (agent) => {
-              liveContentRefs.current[sid] = '';
-              codeAgentRefs.current[sid] = agent.producesCode;
-              setRun(sid, { live: { agent, content: '', phase: 'thinking' }, liveFiles: [] });
-              appendLog(sid, 'agent', `${agent.name} 开始工作…`);
-              if (agent.producesCode && sid === currentIdRef.current) setActiveTab('code');
-            },
-            onAgentDelta: (t) => {
-              const content = (liveContentRefs.current[sid] || '') + t;
-              liveContentRefs.current[sid] = content;
-              setRuns((prev) => {
-                const cur = prev[sid] || IDLE;
-                const live = cur.live ? { ...cur.live, content, phase: 'writing' as const } : cur.live;
-                const liveFiles = codeAgentRefs.current[sid]
-                  ? parseEngineerOutput(content).files
-                  : cur.liveFiles;
-                return { ...prev, [sid]: { ...cur, live, liveFiles } };
-              });
-            },
-            onAgentDone: (agent, content) => {
-              const parsed = agent.producesCode ? parseEngineerOutput(content) : null;
-              appendMessage(sid, {
-                id: uid('a'),
-                kind: 'agent',
-                content,
-                agentId: agent.id,
-                agentName: agent.name,
-                hasCode: Boolean(parsed && parsed.files.length > 0),
-              });
-              if (!agent.producesCode && !firstNonCodeSummary) {
-                firstNonCodeSummary = stripFences(content);
-              }
-              if (parsed && parsed.files.length > 0) {
-                patchCurrent(sid, (s) => ({
-                  ...s,
-                  files: parsed.files,
-                  framework: parsed.framework,
-                  summary: firstNonCodeSummary || s.summary,
-                  updatedAt: Date.now(),
-                }));
-                appendLog(sid, 'ok', `✔ ${agent.name} 生成 ${parsed.files.length} 个文件`);
-
-                // 内置团队产出的代码仅在内存中，写入磁盘目录持久化。
-                // 会话选定目录时直接写入该目录，否则写入 <工作根目录>/<项目名>。
-                const projectDir = sessionWorkDir
-                  ? sessionWorkDir
-                  : cfg.local.workDir
-                    ? `${cfg.local.workDir}/${projectName}`
-                    : null;
-                if (projectDir) {
-                  writeProjectFiles(parsed.files, projectDir).catch(() => {});
-                }
-
-                void runPreviewBuild(sid, parsed.files, parsed.framework);
-              } else if (!agent.producesCode) {
-                appendLog(sid, 'ok', `✔ ${agent.name} 完成`);
-              }
-              setRun(sid, { live: null });
-            },
-            onError: (msg) => {
-              appendLog(sid, 'error', msg);
-              setRun(sid, { error: msg });
-            },
-          },
-          controller.signal,
-        ).finally(() => {
-          setRun(sid, { running: false, live: null, liveFiles: [] });
-          delete abortRefs.current[sid];
-        });
-      })();
     },
-    [agents, appendLog, appendMessage, current, envConfig, patchCurrent, renameSession, runPreviewBuild, runs, sessions, setRun, selectedAgentIds, activeWorkflowId, multiAgentMode, customAgents, workflows],
+    [appendLog, appendMessage, current, envConfig, patchCurrent, renameSession, runPreviewBuild, runs, sessions, setRun, selectedAgentIds, activeWorkflowId, multiAgentMode, customAgents, workflows],
   );
 
   const clearError = useCallback(() => setRun(currentIdRef.current, { error: null }), [setRun]);
@@ -1569,8 +1457,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const saveCustomAgent = useCallback(async (agent: CustomAgent): Promise<CustomAgent> => {
-    const { id, createdAt, updatedAt, ...payload } = agent;
+  const saveCustomAgent = useCallback(async (agent: CustomAgent | Omit<CustomAgent, 'id' | 'createdAt' | 'updatedAt'>): Promise<CustomAgent> => {
+    const full = 'id' in agent && agent.id
+      ? agent as CustomAgent
+      : { ...newCustomAgentTemplate(), ...agent, id: '' };
+    const { id, createdAt, updatedAt, ...payload } = full;
     let saved: CustomAgent;
     if (id) {
       saved = await updateCustomAgent(id, payload);
@@ -1615,16 +1506,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const setActiveWorkflowIdCb = useCallback((id: string | null) => setActiveWorkflowId(id), []);
 
-  // 登录态 / API 配置变化后，拉取一次智能体与工作流。
+  // 登录态 / 远端 URL / 执行模式变化后，拉取智能体与工作流（本地与云端共用）。
   useEffect(() => {
     reloadCustomAgents();
     reloadWorkflows();
-  }, [authEmail, envConfig.mode, reloadCustomAgents, reloadWorkflows]);
+  }, [authEmail, envConfig.mode, envConfig.remote.url, reloadCustomAgents, reloadWorkflows]);
 
   const value: AppState = {
     sessions,
     current,
-    agents,
     envConfig: current?.envConfig || envConfig,
     live: run.live,
     liveFiles: run.liveFiles,
@@ -1637,8 +1527,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     switchSession,
     deleteSession,
     renameSession,
-    updateAgents,
-    resetAgents,
     // environment
     setEnvConfig,
     setSessionWorkDir,
@@ -1653,6 +1541,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     mergeLocalSession,
     // auth
     authEmail,
+    isAdmin,
     conversationUsage,
     login,
     register,

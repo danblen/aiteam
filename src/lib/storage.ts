@@ -1,10 +1,8 @@
-import type { AgentRole, Framework, Session } from './types';
-import { DEFAULT_AGENTS } from './agents';
+import type { Framework, Session } from './types';
 import { defaultEnvConfig } from './env/types';
 import type { EnvironmentConfig } from './env/types';
 
 const K_SESSIONS = 'aiteam.sessions.v1';
-const K_AGENTS = 'aiteam.agents.v1';
 const K_CURRENT = 'aiteam.current.v1';
 const K_ENV = 'aiteam.env.v1';
 const K_LOCAL_PROJECTS = 'aiteam.localprojects.v1';
@@ -67,16 +65,6 @@ export function createSession(seed?: EnvironmentConfig): Session {
   };
 }
 
-export function loadAgents(): AgentRole[] {
-  const agents = read<AgentRole[]>(K_AGENTS, []);
-  if (!Array.isArray(agents) || agents.length === 0) return DEFAULT_AGENTS.map((a) => ({ ...a }));
-  return agents;
-}
-
-export function saveAgents(agents: AgentRole[]) {
-  write(K_AGENTS, agents);
-}
-
 export function loadSessions(): Session[] {
   const sessions = read<Session[]>(K_SESSIONS, []);
   if (!Array.isArray(sessions)) return [];
@@ -111,7 +99,10 @@ export function loadEnvConfig(): EnvironmentConfig {
   if (!stored || typeof stored !== 'object') return base;
   return {
     mode: stored.mode === 'ssh' || stored.mode === 'remote' ? stored.mode : 'local',
-    local: { ...base.local, ...(stored.local || {}) },
+    local: {
+      cliId: stored.local?.cliId || base.local.cliId,
+      workDir: stored.local?.workDir || '',
+    },
     ssh: { ...base.ssh, ...(stored.ssh || {}), password: '', privateKeyPath: stored.ssh?.privateKeyPath || '' },
     remote: { ...base.remote, ...(stored.remote || {}), token: '' },
   };

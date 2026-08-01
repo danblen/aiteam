@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { isWithin, WORKSPACES_DIR } from './env.js';
-import { ensureAdminForSensitive } from './auth.js';
+import { ensureWorkPathAccess } from './env.js';
 
 /** 与 scanWorkspace / codeview 树一致：跳过这些目录名。 */
 const SKIP_DIRS = new Set([
@@ -21,7 +20,7 @@ function resolveReadablePath(req, res, rawPath) {
     res.status(404).json({ error: '路径不存在' });
     return null;
   }
-  if (!isWithin(WORKSPACES_DIR, abs) && !ensureAdminForSensitive(req, res)) {
+  if (!ensureWorkPathAccess(req, res, abs)) {
     return null;
   }
   return abs;

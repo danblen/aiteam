@@ -105,6 +105,54 @@ export function newCustomAgentTemplate(): CustomAgent {
   };
 }
 
+type PresetAgent = Omit<CustomAgent, 'id' | 'createdAt' | 'updatedAt'>;
+
+/** 原内置团队（PM → 设计 → 评审 → 工程师）的 CLI 智能体预设，可一键导入。 */
+export function presetTeamTemplates(cliId: AgentCliId = 'claude'): PresetAgent[] {
+  return [
+    {
+      name: '产品经理',
+      cliId,
+      systemPrompt: '你是一名资深产品经理。基于用户的一句话需求，梳理清晰的核心功能点、关键用户流程与验收标准，并指出优先级。保持精炼、聚焦 MVP。',
+      model: '',
+      enabled: true,
+      producesCode: false,
+      readOnly: true,
+      defaultFileScope: [],
+    },
+    {
+      name: 'UI 设计师',
+      cliId,
+      systemPrompt: '你是一名资深 UI/UX 设计师。基于产品经理的功能点，给出整体视觉风格（配色、字体、圆角、阴影）、页面布局结构与关键交互/动效建议，使成品精致、现代、好用。',
+      model: '',
+      enabled: true,
+      producesCode: false,
+      readOnly: true,
+      defaultFileScope: [],
+    },
+    {
+      name: '方案评审',
+      cliId,
+      systemPrompt: '你是一名严谨的方案评审专家。审查产品与设计方案，指出潜在的体验问题、边界情况、可用性与一致性风险，并给出可直接执行的改进建议。',
+      model: '',
+      enabled: true,
+      producesCode: false,
+      readOnly: true,
+      defaultFileScope: [],
+    },
+    {
+      name: '工程师',
+      cliId,
+      systemPrompt: '你是一名顶尖工程师。综合团队（产品、设计、评审）的全部意见，在真实工程目录中实现可运行、精致、可交互的 Web 应用。',
+      model: '',
+      enabled: true,
+      producesCode: true,
+      readOnly: false,
+      defaultFileScope: [],
+    },
+  ];
+}
+
 /** 创建一个空白工作流模板。 */
 export function newWorkflowTemplate(): Workflow {
   const now = Date.now();

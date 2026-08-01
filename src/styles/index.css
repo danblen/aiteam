@@ -3782,6 +3782,35 @@ button {
   border-color: #7c86ff;
 }
 
+.agent-picker-btn.workflow.active {
+  border-color: #e8a838;
+}
+
+.ap-empty {
+  padding: 8px 10px 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+.ap-empty p {
+  margin: 0 0 8px;
+}
+.ap-link-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.ap-link-btn:hover {
+  text-decoration: underline;
+}
+.ap-section-foot {
+  padding-top: 0;
+}
+
 .ap-chips {
   display: flex;
   flex-wrap: wrap;

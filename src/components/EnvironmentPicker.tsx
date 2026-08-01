@@ -35,7 +35,7 @@ const MODE_META: Record<EnvironmentConfig['mode'], { icon: ReactNode; label: str
 /** 当前环境摘要（picker 按钮上显示的一行小字）。 */
 function summary(config: EnvironmentConfig): string {
   if (config.mode === 'local') {
-    return config.local.engine === 'builtin' ? '内置团队' : `CLI · ${config.local.cliId}`;
+    return `CLI · ${config.local.cliId}`;
   }
   if (config.mode === 'ssh') {
     return config.ssh.host ? `${config.ssh.username}@${config.ssh.host}` : '未配置主机';

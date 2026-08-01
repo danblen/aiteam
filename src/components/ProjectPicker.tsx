@@ -3,7 +3,6 @@ import { useApp } from '../store/AppProvider';
 import DirBrowserModal from './DirBrowserModal';
 import { listProjects, createProject, deleteProject } from '../lib/api';
 import type { RemoteProject } from '../lib/api';
-import { isAdminEmail } from '../lib/auth';
 
 /**
  * 概览区的项目 / 工作目录选择入口。
@@ -194,8 +193,7 @@ function RemotePicker() {
   const [dirName, setDirName] = useState('');
 
   const loggedIn = Boolean(app.authEmail);
-  // 仅超管可见：浏览服务器任意目录（后端 /api/env/local/dirs 同样鉴权）。
-  const canSelectDir = isAdminEmail(app.authEmail);
+  const canSelectDir = loggedIn;
 
   const refresh = useCallback(() => {
     if (!loggedIn) return;
@@ -348,7 +346,9 @@ function RemotePicker() {
             或在服务器上选择工作目录
           </div>
           <p className="env-hint">
-            在当前应用所在服务器上浏览并选择一个 Git 仓库目录，像本地模式一样为本会话创建工作树（也可在下一步改为直接在当前分支开发）。
+            {app.isAdmin
+              ? '在服务器上浏览并选择 Git 仓库目录（超管可访问任意路径）。'
+              : '在您的专属工作空间内选择 Git 仓库目录（无法访问其他用户或系统目录）。'}
           </p>
           <div className="project-new">
             <input

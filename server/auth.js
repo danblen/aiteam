@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { DEFAULT_ADMIN_EMAIL } from '../shared/config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '.data');
@@ -120,12 +121,17 @@ export function authFromRequest(req) {
 
 // ---------- 管理员鉴权 ----------
 // 高危操作（浏览服务器任意目录、对任意目录建/合并工作树、在任意目录跑 CLI）
-// 可直接改动服务器上的代码，仅限管理员账号。默认管理员邮箱可用 ADMIN_EMAIL 覆盖。
-export const ADMIN_EMAIL = normalizeEmail(process.env.ADMIN_EMAIL || 'q@q.qq');
+// 可直接改动服务器任意路径的仅限管理员。默认邮箱见 shared/config.js，可用 ADMIN_EMAIL 覆盖。
+export const ADMIN_EMAIL = normalizeEmail(process.env.ADMIN_EMAIL || DEFAULT_ADMIN_EMAIL);
 
-/** 当前请求是否为管理员（邮箱匹配 ADMIN_EMAIL，大小写不敏感）。 */
+/** 邮箱是否为管理员（与 ADMIN_EMAIL 精确匹配，大小写不敏感）。 */
+export function isAdminEmail(email) {
+  return normalizeEmail(email) === ADMIN_EMAIL;
+}
+
+/** 当前请求是否为管理员。 */
 export function isAdmin(req) {
-  return normalizeEmail(req.user?.email) === ADMIN_EMAIL;
+  return isAdminEmail(req.user?.email);
 }
 
 /**
@@ -222,7 +228,7 @@ export function mountAuth(app) {
     const users = readUsers();
     users.push({ email, salt, hash, createdAt: Date.now() });
     writeUsers(users);
-    res.json({ ok: true, email, token: signToken(email) });
+    res.json({ ok: true, email, token: signToken(email), isAdmin: isAdminEmail(email) });
   });
 
   // 登录。
@@ -233,13 +239,13 @@ export function mountAuth(app) {
     if (!user || !verifyPassword(password, user.salt, user.hash)) {
       return res.status(401).json({ error: '邮箱或密码错误' });
     }
-    res.json({ ok: true, email, token: signToken(email) });
+    res.json({ ok: true, email, token: signToken(email), isAdmin: isAdminEmail(email) });
   });
 
   // 当前登录用户。
   app.get('/api/auth/me', (req, res) => {
     const payload = authFromRequest(req);
     if (!payload) return res.status(401).json({ error: '未登录或令牌已过期' });
-    res.json({ ok: true, email: payload.email });
+    res.json({ ok: true, email: payload.email, isAdmin: isAdminEmail(payload.email) });
   });
 }

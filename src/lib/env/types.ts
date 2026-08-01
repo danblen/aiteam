@@ -3,14 +3,11 @@ import type { ProjectFile } from '../types';
 /** 执行环境模式：本机 / SSH 远程服务器 / 云端部署的同款实例 */
 export type EnvironmentMode = 'local' | 'ssh' | 'remote';
 
-/** Local 模式内部再分：内置多智能体团队 / 本机 CLI Agent（方案 A 整体替换） */
-export type LocalEngine = 'builtin' | 'cli';
-
-/** 一个可被当前环境执行的 Agent。 */
+/** 一个可被当前环境执行的 CLI Agent。 */
 export interface AvailableAgent {
-  id: string; // 'builtin' | 'claude' | 'opencode' | ...
+  id: string; // 'claude' | 'opencode' | ...
   name: string; // 显示名
-  kind: 'builtin' | 'cli';
+  kind: 'cli';
   path?: string; // CLI 可执行文件绝对路径
   version?: string;
 }
@@ -37,9 +34,9 @@ export interface EnvHealth {
  */
 export interface ExecutionEnvironment {
   readonly mode: EnvironmentMode;
-  /** 检测当前环境可用的 Agent（内置团队 / 本机或远程已安装的 CLI）。 */
+  /** 检测当前环境可用的 CLI Agent。 */
   listAgents(): Promise<AvailableAgent[]>;
-  /** 流式执行一次任务。CLI Agent 会绕开内置 orchestrator。 */
+  /** 流式执行一次任务。 */
   run(task: string, agentId: string, signal: AbortSignal): AsyncIterable<AgentEvent>;
   /** 当前 session 的文件从哪读（内存 / 磁盘 / 远程）。 */
   readFiles(sid: string): Promise<ProjectFile[]>;
@@ -51,8 +48,7 @@ export interface ExecutionEnvironment {
 // ---------- 配置模型 ----------
 
 export interface LocalEnvConfig {
-  engine: LocalEngine; // 'builtin' | 'cli'
-  cliId: string; // engine='cli' 时：'claude' | 'opencode'
+  cliId: string; // 'claude' | 'opencode' | 'aider'
   workDir?: string; // CLI 工作目录，默认 server/.workspaces/<sid>
 }
 
@@ -84,7 +80,7 @@ export interface EnvironmentConfig {
 export function defaultEnvConfig(): EnvironmentConfig {
   return {
     mode: 'remote',
-    local: { engine: 'builtin', cliId: 'claude', workDir: '' },
+    local: { cliId: 'claude', workDir: '' },
     ssh: {
       host: '',
       port: 22,

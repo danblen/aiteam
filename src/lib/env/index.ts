@@ -5,7 +5,6 @@ import { SSHEnvironment } from './ssh';
 
 /**
  * Factory: create the right ExecutionEnvironment for the given config + session.
- * Returns `null` when the engine is 'builtin' (uses existing runCrew orchestrator).
  *
  * @param projectName 本会话对应的项目目录名（工作根目录下的子文件夹）。
  * @param sessionWorkDir 本会话选定的本地目录（绝对路径）；设置后直接作为项目根。
@@ -16,7 +15,7 @@ export function createEnvironment(
   projectName?: string,
   sessionWorkDir?: string,
 ): ExecutionEnvironment | null {
-  if (config.mode === 'local' && config.local.engine === 'cli') {
+  if (config.mode === 'local') {
     if (sessionWorkDir) {
       return new LocalEnvironment(
         { ...config.local, workDir: sessionWorkDir },
@@ -33,6 +32,5 @@ export function createEnvironment(
   if (config.mode === 'remote' && config.remote.url) {
     return new RemoteEnvironment(config.remote, sid, projectName, sessionWorkDir);
   }
-  // builtin 引擎
   return null;
 }

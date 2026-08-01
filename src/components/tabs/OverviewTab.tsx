@@ -74,7 +74,7 @@ export default function OverviewTab() {
             {s.summary ? (
               <p className="ov-summary">{stripBullets(s.summary)}</p>
             ) : (
-              <p className="ov-muted">尚无产品说明，发送一次需求即可由产品经理智能体生成。</p>
+              <p className="ov-muted">尚无产品说明，发送一次需求后由智能体协作生成。</p>
             )}
             {features.length > 0 && (
               <ul className="ov-features">
@@ -107,7 +107,7 @@ export default function OverviewTab() {
                 <span>文件</span>
               </div>
               <div className="ov-stat">
-                <strong>{app.agents.filter((a) => a.enabled).length}</strong>
+                <strong>{app.customAgents.filter((a) => a.enabled).length}</strong>
                 <span>启用智能体</span>
               </div>
               <div className="ov-stat">

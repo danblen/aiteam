@@ -3,9 +3,9 @@ import fs from 'node:fs';
 import express from 'express';
 import { scanWorkspace } from './cli.js';
 import { startDevServer } from './preview-dev.js';
-import { ensureAdminForSensitive, checkConversationLimit } from './auth.js';
+import { checkConversationLimit } from './auth.js';
 import { ensureIsolatedUser, secureWorkspace } from './user-isolate.js';
-import { resolveProjectDir, isWithin, WORKSPACES_DIR } from './env.js';
+import { resolveProjectDir, ensureWorkPathAccess } from './env.js';
 import {
   listAgents,
   getAgentById,
@@ -193,7 +193,7 @@ async function runOrchestration(req, res, params) {
   }
 
   const workDir = resolveProjectDir(reqWorkDir, projectName, sid, req.user?.email, direct);
-  if (!isWithin(WORKSPACES_DIR, workDir) && !ensureAdminForSensitive(req, res)) {
+  if (!ensureWorkPathAccess(req, res, workDir)) {
     return { error: 'forbidden', status: 403 };
   }
   fs.mkdirSync(workDir, { recursive: true });

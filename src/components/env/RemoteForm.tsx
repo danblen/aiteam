@@ -23,7 +23,7 @@ export default function RemoteForm({ config, onChange }: Props) {
       <div className="env-field">
         <label className="env-label">云端实例</label>
         <p className="env-hint">
-          将连接到当前部署的这套 AI Team 应用（<b>{apiBase || '当前站点'}</b>）。任务发送到该服务端，由它<b>直接在服务器上运行 CLI 修改代码</b>并回流预览。
+          将连接到当前部署的这套 AI Team 应用（<b>{apiBase || '当前站点'}</b>）。在聊天栏使用<b>智能体选择器</b>挑选自定义智能体、工作流或 Supervisor 模式；未选择时则使用下方默认 CLI 单 Agent 执行。
         </p>
       </div>
 
