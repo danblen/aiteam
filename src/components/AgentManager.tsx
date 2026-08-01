@@ -47,7 +47,7 @@ export default function AgentManager() {
           <button className="btn ghost" onClick={reset}>恢复默认团队</button>
         </div>
       </div>
-      <div className="pane-body" style={{ padding: 0, overflow: 'hidden' }}>
+      <div className="pane-body agents-pane">
         <div className="agents-body">
           <div className="agents-list">
             {agents.map((a, i) => (

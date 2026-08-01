@@ -1368,6 +1368,20 @@ button {
   color: var(--text-faint);
   margin-top: 4px;
 }
+/* Split pane: list + editor; pane-body must be flex column so agents-body gets bounded height. */
+.pane-body.agents-pane {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+.pane-body.agents-pane > .ca-error {
+  flex-shrink: 0;
+}
+.pane-body.agents-pane > .agents-body {
+  flex: 1;
+  min-height: 0;
+}
 .agents-body {
   display: grid;
   grid-template-columns: 300px 1fr;
@@ -1378,6 +1392,7 @@ button {
   border-right: 1px solid var(--border);
   padding: 12px;
   overflow-y: auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1501,6 +1516,7 @@ button {
 .agent-editor {
   padding: 16px 18px;
   overflow-y: auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 14px;

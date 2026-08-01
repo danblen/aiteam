@@ -190,7 +190,7 @@ export default function WorkflowsTab() {
           <button className="btn ghost" onClick={handleAdd}>＋ 新建</button>
         </div>
       </div>
-      <div className="pane-body" style={{ padding: 0, overflow: 'hidden' }}>
+      <div className="pane-body agents-pane">
         {error && <div className="ca-error">⚠️ {error}</div>}
         <div className="agents-body">
           <div className="agents-list">
