@@ -149,8 +149,8 @@ export function ensureAdminForSensitive(req, res) {
 
 // ---------- 对话次数限制 ----------
 // 每个邮箱只能发 N 次对话，超管不限制。
-// 可通过环境变量 MAX_CONVERSATIONS_PER_USER 覆盖（默认 5）。
-export const MAX_CONVERSATIONS_PER_USER = Math.max(1, parseInt(process.env.MAX_CONVERSATIONS_PER_USER || '5', 10) || 5);
+// 可通过环境变量 MAX_CONVERSATIONS_PER_USER 覆盖（默认 20）。
+export const MAX_CONVERSATIONS_PER_USER = Math.max(1, parseInt(process.env.MAX_CONVERSATIONS_PER_USER || '20', 10) || 20);
 
 /** 读取用户的已用对话次数。 */
 export function getConversationCount(email) {
