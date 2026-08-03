@@ -541,7 +541,7 @@ export default function WorkflowsTab() {
               </div>
 
               <div className="wf-run">
-                <div className="wf-run-head">▶ 运行此工作流</div>
+                <div className="wf-run-head">运行此工作流</div>
                 <div className="wf-run-row">
                   <input
                     value={runText}
