@@ -4,8 +4,7 @@
   --bg-elev-2: #f2f2f6;
   --panel: #fdfcfc;
   --border: #dedee0;
-  --border-soft: #dedee0;
-  --border-strong: #dedee0;
+  --border-soft: #ececf0;
   --text: #12151c;
   --text-dim: #29323f;
   --text-faint: #47546a;
@@ -177,7 +176,7 @@ button {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-right: 1px solid var(--border-strong);
+  border-right: 1px solid var(--border);
   background: var(--panel);
 }
 
@@ -1034,7 +1033,7 @@ button {
   flex-direction: column;
   min-height: 0;
   background: var(--bg);
-  border-right: 1px solid var(--border-strong);
+  border-right: 1px solid var(--border);
   padding: 12px 10px;
 }
 .new-session {
@@ -1213,7 +1212,7 @@ button {
   gap: 8px;
   margin-top: 8px;
   padding-top: 10px;
-  border-top: 1px solid var(--border-strong);
+  border-top: 1px solid var(--border);
 }
 .sidebar-foot-area .status-pill {
   width: 100%;

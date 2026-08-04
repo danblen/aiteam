@@ -21,7 +21,14 @@ async function findPortPair(baseFe) {
 }
 
 async function main() {
-  const { fe, be } = await findPortPair(5100);
+  // 支持通过环境变量指定固定端口（预览代理等场景）
+  let fe, be;
+  if (process.env.FE_PORT && process.env.SERVER_PORT) {
+    fe = Number(process.env.FE_PORT);
+    be = Number(process.env.SERVER_PORT);
+  } else {
+    ({ fe, be } = await findPortPair(5100));
+  }
 
   console.log(`\n  [dev] FE → ${fe}, BE → ${be}\n`);
 
