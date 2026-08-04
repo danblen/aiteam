@@ -759,13 +759,20 @@ button {
   font-size: 13px;
   padding: 6px 14px;
   border-radius: 7px;
+  cursor: pointer;
   transition: all 0.16s ease;
 }
 
-.tab.active {
-  background: var(--bg-elev-2);
+.tab:hover:not(.active) {
   color: var(--text);
-  box-shadow: 0 1px 3px rgba(30, 41, 78, 0.12);
+  background: rgba(0,0,0,0.04);
+}
+
+.tab.active {
+  background: #fff;
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(47, 111, 208, 0.18), 0 0 0 1px rgba(47, 111, 208, 0.08);
 }
 
 .tab-dot {
