@@ -265,7 +265,11 @@ export function spawnAsUser(binPath, args, opts, uid) {
         OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
         OPENAI_BASE_URL: process.env.OPENAI_BASE_URL || '',
         OPENAI_MODEL: process.env.OPENAI_MODEL || '',
-        ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || '',
+        // Claude Code: 经 claude-code-router (127.0.0.1:3456) 路由到与 OpenCode
+        // 相同的 ZenGo 网关 + deepseek-v4-flash。ccr 负责 Anthropic→OpenAI
+        // 协议/工具格式转换与模型映射（claude 官方模型名 → deepseek-v4-flash）。
+        ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || 'any-string-is-ok',
+        ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL || 'http://127.0.0.1:3456',
       },
     });
   }
