@@ -33,6 +33,8 @@ export default function App() {
   // 会话选定目录时直接用它；否则沿用「工作根目录/项目名」。
   const projectDir = app.current.workDir
     ? app.current.workDir
+    : app.current.pendingProjectWorkDir
+      ? app.current.pendingProjectWorkDir
     : app.envConfig?.local?.workDir
       ? `${app.envConfig.local.workDir}/${projectDirName(app.current.title, app.current.id)}`
       : undefined;

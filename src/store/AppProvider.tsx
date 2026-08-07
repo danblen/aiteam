@@ -509,7 +509,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         ...s,
         pendingProjectId: project.id,
         pendingProjectName: project.name,
-        pendingProjectWorkDir: isNew ? project.workDir : undefined,
+        // 新会话在首条消息发送前尚未 checkout worktree，但代码区仍需要
+        // 读取已有项目的主目录；发送消息后会由 bind/checkout 切换到 worktree。
+        pendingProjectWorkDir: project.workDir,
         pendingProjectIsNew: isNew ?? false,
         updatedAt: Date.now(),
       }));
