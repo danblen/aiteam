@@ -32,6 +32,22 @@ function stepHasAdvanced(s: WorkflowStep): boolean {
   );
 }
 
+/** 将导入的条件表达式翻译成普通用户能读懂的说明，同时保留原表达式可编辑。 */
+function conditionSummary(condition: string | undefined, steps: WorkflowStep[]): string | null {
+  const raw = condition?.trim();
+  if (!raw) return null;
+  const match = raw.match(/^nodes\.([^.\s]+)\.contract\.([a-zA-Z]+)\s+(contains|==|exists)\s*(.*)$/);
+  if (!match) return '满足这条条件时才执行；当前条件使用高级表达式。';
+  const [, nodeId, field, operator, value] = match;
+  const index = steps.findIndex((step) => step.id === nodeId);
+  const stepName = index >= 0 ? `第 ${index + 1} 步` : '上游步骤';
+  const fieldName = field === 'summary' ? '执行结果摘要' : field === 'files' ? '产出文件' : field;
+  if (operator === 'exists') return `当${stepName}有${fieldName}时，才执行这一步。`;
+  const cleanValue = value.replace(/^['"]|['"]$/g, '');
+  if (operator === 'contains') return `当${stepName}的${fieldName}包含“${cleanValue}”时，才执行这一步。`;
+  return `当${stepName}的${fieldName}等于“${cleanValue}”时，才执行这一步。`;
+}
+
 /** 高级编排摘要徽章文案。 */
 function stepAdvancedBadges(s: WorkflowStep, _stepIndex: number, allSteps: WorkflowStep[]): string[] {
   const badges: string[] = [];
@@ -468,6 +484,11 @@ export default function WorkflowsTab() {
                               <div className="wf-adv-grid wf-adv-grid-3">
                                 <div className="field grow span-2">
                                   <label>执行条件</label>
+                                  {conditionSummary(s.condition, selected.steps || []) && (
+                                    <div className="wf-condition-hint">
+                                      {conditionSummary(s.condition, selected.steps || [])}
+                                    </div>
+                                  )}
                                   <input
                                     value={s.condition || ''}
                                     onChange={(e) => updateStep(selected.id, s.id, { condition: e.target.value })}
